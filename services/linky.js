@@ -28,7 +28,8 @@ class Linky {
 						        indexHeureCreuse: this.linkyData.indexHeureCreuse,
 						        indexHeurePleine: this.linkyData.indexHeurePleine,
 						        currentMax: this.linkyData.intensiteMax,
-						        currentSubscribe: this.linkyData.intensiteSouscrit
+						        currentSubscribe: this.linkyData.intensiteSouscrit,
+							power: this.linkyData.puissanceApparente
 			     			}
 			     		);
 			     }
@@ -57,6 +58,9 @@ class Linky {
 			     break;
 		case 'HHPHC':
 			     this.linkyData.heureCreuseHeurePleine = params[1];
+			     break;
+		case 'PAPP':
+			     this.linkyData.puissanceApparente = params[1];
 			     break;
 		case 'MOTDETAT':
 			     this.linkyData.etatCompteur = params[1];

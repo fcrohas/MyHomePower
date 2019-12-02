@@ -14,7 +14,8 @@ class Store {
 		        indexHeureCreuse: Influx.FieldType.INTEGER,
 		        indexHeurePleine: Influx.FieldType.INTEGER,
 		        currentMax: Influx.FieldType.INTEGER,
-		        currentSubscribe: Influx.FieldType.INTEGER
+		        currentSubscribe: Influx.FieldType.INTEGER,
+			power: Influx.FieldType.INTEGER
 		      },
 		      tags: [
 		        'deliveryPoint',
@@ -48,7 +49,8 @@ class Store {
 		        indexHeureCreuse: record.indexHeureCreuse,
 		        indexHeurePleine: record.indexHeurePleine,
 		        currentMax: record.currentMax,
-		        currentSubscribe: record.currentSubscribe
+		        currentSubscribe: record.currentSubscribe,
+			power: record.power
 	        },
 	      }
 	    ]).catch(err => {

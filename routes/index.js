@@ -8,7 +8,7 @@ const Path = require('path');
 // Prepare
 const config = JSON.parse(fs.readFileSync("./config.json", 'utf8'))
 const store = new Store(config);
-const linky = new Linky({ device: '/dev/ttyVUSB0'}, store);
+const linky = new Linky({ device: '/dev/ttyUSB0'}, store);
 
 store.connect().then(() => {
 	linky.initialize();
