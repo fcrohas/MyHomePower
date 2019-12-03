@@ -1,16 +1,47 @@
 <style scoped>
+p,span {
+	display: inline-block;
+	margin: 0px 5px;
+}
+.indicator {
+	color: white;
+}
 </style>
 <template>
-	<div>
+	<p>
 		<span>
-			<h3>Heure creuse: {{ heureCreuse / 1000 }} Kwh</h3>
-			<h3>Heure pleine: {{ heurePleine / 1000 }} Kwh</h3>
+			<v-card class="mx-auto" max-width="344" outlined>
+				<v-list-item three-line>
+					<v-list-item-content>
+						<div class="overline mb-4">Ce mois</div>
+						<v-list-item-title class="headline mb-1">Puissance</v-list-item-title>
+						<v-list-item-subtitle>Consonmation en HC / HP</v-list-item-subtitle>
+					</v-list-item-content>
+					<v-list-item-avatar tile size="80" color="blue" class="indicator">
+						{{ Math.round(heureCreuse / 1000) }} Kwh
+						<br>----------<br>
+						{{ Math.round(heurePleine / 1000) }} Kwh
+					</v-list-item-avatar>
+				</v-list-item>
+			</v-card>
 		</span>
 		<span>
-			<h3>Euros creuse: {{ getTotalHeureCreuse() }} €</h3>
-			<h3>Euros pleine: {{ getTotalHeurePleine() }} €</h3>
+			<v-card class="mx-auto" max-width="344" outlined>
+				<v-list-item three-line>
+					<v-list-item-content>
+						<div class="overline mb-4">Ce mois</div>
+						<v-list-item-title class="headline mb-1">Coût</v-list-item-title>
+						<v-list-item-subtitle>Prix HC / HP</v-list-item-subtitle>
+					</v-list-item-content>
+					<v-list-item-avatar tile size="80" color="blue" class="indicator">
+						{{ getTotalHeureCreuse }} €
+						<br>----------<br>
+						{{ getTotalHeurePleine }} €
+					</v-list-item-avatar>
+				</v-list-item>
+			</v-card>
 		</span>
-	</div>
+	</p>
 </template>
 
 <script>
@@ -21,25 +52,33 @@ export default {
 	name: 'PowerIndicator',
 	methods: {
 		getIndexAtDate(from, to) {
+			let minHeureCreuse = 0;
+			let minHeurePleine = 0;
 			http.get('/store/index/bydate/'+from)
 				.then( (response) => {
-					this.heureCreuse = response.data[0].indexHeureCreuse;
-					this.heurePleine = response.data[0].indexHeurePleine;
+					minHeureCreuse = response.data[0].indexHeureCreuse;
+					minHeurePleine = response.data[0].indexHeurePleine;
 					return http.get('/store/index/bydate/'+to);
 				}).then( (response) => {
-					this.heureCreuse = response.data[0].indexHeureCreuse - this.heureCreuse;
-					this.heurePleine = response.data[0].indexHeurePleine - this.heurePleine;
+					this.heureCreuse = response.data[0].indexHeureCreuse - minHeureCreuse;
+					this.heurePleine = response.data[0].indexHeurePleine - minHeurePleine;
 				});
-		},
+		}
+	},
+	computed: {
 		getTotalHeureCreuse: function() {
-			return this.heureCreuse * 0.12 / 1000;
+			return Math.round(this.heureCreuse * 0.1228 / 10) / 100;
 		},
 		getTotalHeurePleine: function() {
-			return this.heurePleine * 0.15 / 1000;
+			return Math.round(this.heurePleine * 0.1579 / 10) / 100;
 		}
 	},
 	mounted() {
-		this.getIndexAtDate('2019-11-27', '2019-12-01');
+		const today = new Date();
+		const firstDayOfMonth = today.getFullYear() + '-' + (today.getMonth() + 1) + '-01';
+		const currentDay = today.getDay() + 1 < 10 ? '0' + (today.getDay() + 1) : (today.getDay() + 1);
+		const currentDayOfMonth = today.getFullYear() + '-' + (today.getMonth() + 1) + '-' + currentDay;
+		this.getIndexAtDate(firstDayOfMonth, currentDayOfMonth);
 	},
 	data() {
 		return {

@@ -25,6 +25,8 @@ class Store {
 		  ]
 		});
     	this.config = opts;
+    	this.prixHeureCreuse = 0.1228;
+    	this.prixHeurePleine = 0.1579;
    }
 
    connect() {
@@ -75,12 +77,15 @@ class Store {
       `);
    }
 
-   findPowerByRange(startDate, endDate) {
+   findPowerByRange(startDate, endDate, groupby= '1h') {
       return this.influx.query(`
-	    select * from linky_datas
-	    where time => ${Influx.escape.stringLit(startDate)}
+	    select 
+	    (max("indexHeureCreuse") - min("indexHeureCreuse")) / 1000 * ${this.prixHeureCreuse} AS "HeureCreuse", 
+	    (max("indexHeurePleine") - min("indexHeurePleine")) / 1000 * ${this.prixHeurePleine} AS "HeurePleine"
+	    from liny_datas
+	    where time >= ${Influx.escape.stringLit(startDate)}
 	    and time <= ${Influx.escape.stringLit(endDate)}
-	    order by time desc
+	    group by time(${groupby})
 	  `);
    }
 }
