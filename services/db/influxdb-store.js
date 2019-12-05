@@ -77,11 +77,22 @@ class Store {
       `);
    }
 
-   findPowerByRange(startDate, endDate, groupby= '1h') {
+   findIndexByRange(startDate, endDate, groupby= '1h') {
       return this.influx.query(`
 	    select 
-	    (max("indexHeureCreuse") - min("indexHeureCreuse")) / 1000 * ${this.prixHeureCreuse} AS "HeureCreuse", 
-	    (max("indexHeurePleine") - min("indexHeurePleine")) / 1000 * ${this.prixHeurePleine} AS "HeurePleine"
+	    (max("indexHeureCreuse") - min("indexHeureCreuse")) AS "HeureCreuse", 
+	    (max("indexHeurePleine") - min("indexHeurePleine")) AS "HeurePleine"
+	    from liny_datas
+	    where time >= ${Influx.escape.stringLit(startDate)}
+	    and time <= ${Influx.escape.stringLit(endDate)}
+	    group by time(${groupby})
+	  `);
+   }
+
+   findPowerByRange(startDate, endDate, groupby= '30m') {
+      return this.influx.query(`
+	    select 
+	    mean(power) AS "powerkva"
 	    from liny_datas
 	    where time >= ${Influx.escape.stringLit(startDate)}
 	    and time <= ${Influx.escape.stringLit(endDate)}

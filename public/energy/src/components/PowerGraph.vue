@@ -5,7 +5,6 @@
 		<v-list-item three-line>
 			<v-list-item-content>
 				<div class="overline mb-4">Aujourd'hui</div>
-				<v-list-item-subtitle>Coût journalier de {{totalJour}} €</v-list-item-subtitle>
 				<canvas id="power-chart"></canvas>
 			</v-list-item-content>
 		</v-list-item>
@@ -20,19 +19,63 @@ import http from 'axios';
 
 export default {
 	name: 'PowerGraph',
+	props: ['mode','groupby','from','to'],
+	watch: {
+		from() {
+			if (this.from && this.to) {
+				this.getPowerAtDate(this.from, this.to);
+			}
+		},
+		to() {
+			if (this.from && this.to) {
+				this.getPowerAtDate(this.from, this.to);
+			}
+		}
+	},
 	methods: {
 		getIndexAtDate(from, to) {
-			return http.get(`/store/power/byrange/${from}/${to}`)
+			this.powerOptions.data.labels = [];
+			this.powerOptions.data.datasets[0].data = [];
+			this.powerOptions.data.datasets[1].data = [];
+			return http.get(`/store/index/byrange/${from}/${to}/?groupby=${this.groupby}`)
 				.then( (response) => {
 					response.data.forEach( data => {
 						const time = new Date(data.time);
 						this.powerOptions.data.labels.push(time.getHours() + ' h');
-						this.powerOptions.data.datasets[0].data.push(Math.round(data.HeureCreuse * 100) / 100);
-						this.powerOptions.data.datasets[1].data.push(Math.round(data.HeurePleine * 100) / 100);
-						this.totalJour += Math.round(data.HeureCreuse * 100) / 100 + Math.round(data.HeurePleine * 100) / 100;
+						this.powerOptions.data.datasets[0].data.push(Math.round(data.HeureCreuse * 0.1320 / 10) / 100);
+						this.powerOptions.data.datasets[1].data.push(Math.round(data.HeurePleine * 0.1720 / 10) / 100);
 					});
-					this.totalJour = Math.round(this.totalJour * 100) / 100;
 				});
+		},
+		getPowerAtDate(from, to) {
+			this.powerOptions.data.labels = [];
+			this.powerOptions.data.datasets[0].data = [];
+			this.powerOptions.data.datasets[1].data = [];
+			return http.get(`/store/power/byrange/${from}/${to}/?groupby=${this.groupby}`)
+				.then( (response) => {
+					response.data.forEach( data => {
+						if (data.powerkva) {
+							const time = new Date(data.time);
+							this.powerOptions.data.labels.push(this.timeToLabel(time));
+							this.powerOptions.data.datasets[0].data.push(data.powerkva);
+						}
+					});
+					if (this.myChart) {
+						// this.myChart.data.update();
+					}
+				});
+		},
+		timeToLabel(time) {
+			let formated = '';
+			switch(this.groupby.replace(/[0-9]/g,'')) {
+				case 'm' : formated = time.getHours() + ' h ' + time.getMinutes() + ' m';
+						break;
+				case 'h' : formated = time.getHours() + ' h';
+						break;
+				case 'd' : formated = time.getDate() + '/' + time.getMonth();
+						break;
+			}
+			return formated;
 		},
 		createChart(chartId, chartOptions) {
 			const ctx = document.getElementById(chartId);
@@ -47,15 +90,20 @@ export default {
 		const today = new Date();
 		const currentDay = today.getDay() + 1 < 10 ? '0' + (today.getDay() + 1) : (today.getDay() + 1);
 		const currentDayOfMonth = today.getFullYear() + '-' + (today.getMonth() + 1) + '-' + currentDay;
-		this.getIndexAtDate(`${currentDayOfMonth} 00:00:00`,`${currentDayOfMonth} 23:59:59`).then( () => {
-			this.createChart('power-chart', this.powerOptions);
-		});
+		if (this.mode === 'index') {
+			this.getIndexAtDate(`${currentDayOfMonth} 00:00:00`,`${currentDayOfMonth} 23:59:59`).then( () => {
+				this.createChart('power-chart', this.powerOptions);
+			});
+		} else {
+			this.getPowerAtDate(`${this.from} 00:00:00`,`${this.to} 23:59:59`).then( () => {
+				this.createChart('power-chart', this.powerOptions);
+			});
+		}
 	},
 	data() {
 		return {
 			powerOptions: ChartOptions,
 			powerData: [],
-			totalJour: 0.0
 		}
 	}
 }

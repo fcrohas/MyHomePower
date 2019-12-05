@@ -27,8 +27,17 @@ router.get('/store/index/bydate/:date', function(req, res, next) {
   });
 });
 
+router.get('/store/index/byrange/:start/:end', function(req, res, next) {
+  console.log('groupby=',req.query);
+  store.findIndexByRange(req.params.start, req.params.end, req.query.groupby).then( (data) => {
+  	res.send(data);
+  }).catch( (e) => {
+  	res.status(400).send(e.message);
+  });
+});
+
 router.get('/store/power/byrange/:start/:end', function(req, res, next) {
-  store.findPowerByRange(req.params.start, req.params.end).then( (data) => {
+  store.findPowerByRange(req.params.start, req.params.end, req.query.groupby).then( (data) => {
   	res.send(data);
   }).catch( (e) => {
   	res.status(400).send(e.message);

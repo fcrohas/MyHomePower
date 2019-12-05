@@ -67,10 +67,10 @@ export default {
 	},
 	computed: {
 		getTotalHeureCreuse: function() {
-			return Math.round(this.heureCreuse * 0.1228 / 10) / 100;
+			return Math.round(this.heureCreuse * 0.1320 / 10) / 100;
 		},
 		getTotalHeurePleine: function() {
-			return Math.round(this.heurePleine * 0.1579 / 10) / 100;
+			return Math.round(this.heurePleine * 0.1710 / 10) / 100;
 		}
 	},
 	mounted() {
