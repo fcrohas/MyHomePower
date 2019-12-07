@@ -8,14 +8,14 @@ p,span {
 }
 </style>
 <template>
-	<p>
-		<span>
-			<v-card class="mx-auto" max-width="344" outlined>
+	<v-row no-gutters>
+		<v-col cols="12" xs="12" sm="12" md="6">
+			<v-card class="mx-auto" max-width="100%" outlined>
 				<v-list-item three-line>
 					<v-list-item-content>
 						<div class="overline mb-4">Ce mois</div>
 						<v-list-item-title class="headline mb-1">Puissance</v-list-item-title>
-						<v-list-item-subtitle>Consonmation en HC / HP</v-list-item-subtitle>
+						<v-list-item-subtitle>Conso. en Kwh pour HC / HP</v-list-item-subtitle>
 					</v-list-item-content>
 					<v-list-item-avatar tile size="80" color="blue" class="indicator">
 						{{ Math.round(heureCreuse / 1000) }} Kwh
@@ -24,14 +24,14 @@ p,span {
 					</v-list-item-avatar>
 				</v-list-item>
 			</v-card>
-		</span>
-		<span>
-			<v-card class="mx-auto" max-width="344" outlined>
+		</v-col>
+		<v-col cols="12" xs="12" sm="12" md="6">
+			<v-card class="mx-auto" max-width="100%" outlined>
 				<v-list-item three-line>
 					<v-list-item-content>
 						<div class="overline mb-4">Ce mois</div>
 						<v-list-item-title class="headline mb-1">Coût</v-list-item-title>
-						<v-list-item-subtitle>Prix HC / HP</v-list-item-subtitle>
+						<v-list-item-subtitle>Prix pour HC / HP</v-list-item-subtitle>
 					</v-list-item-content>
 					<v-list-item-avatar tile size="80" color="blue" class="indicator">
 						{{ getTotalHeureCreuse }} €
@@ -40,8 +40,8 @@ p,span {
 					</v-list-item-avatar>
 				</v-list-item>
 			</v-card>
-		</span>
-	</p>
+		</v-col>
+	</v-row>
 </template>
 
 <script>

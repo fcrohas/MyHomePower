@@ -1,18 +1,18 @@
 <style scoped>
 </style>
 <template>
-  <v-container class="grey lighten-5 fill-height">
-    <v-row no-gutters style="flex-wrap: nowrap;">
-      <v-col cols="12" class="flex-grow-0 flex-shrink-0">
+  <v-container class="lighten-5 fill-height">
+    <v-row no-gutters>
+      <v-col cols="12" class="flex-grow-0 flex-shrink-1">
         <PowerIndicator/>
       </v-col>
     </v-row>
-    <v-row no-gutters style="flex-wrap: nowrap;">
-      <v-col cols="9" class="flex-grow-0 flex-shrink-0">
+    <v-row no-gutters>
+      <v-col cols="12" xs="12" sm="12" md="9" class="flex-grow-1 flex-shrink-1">
         <PowerGraph mode="index" groupby="1h"/>
       </v-col>
       <v-spacer></v-spacer>
-      <v-col cols="2" style="flex-wrap: nowrap;" class="flex-grow-0 flex-shrink-0">
+      <v-col cols="12"  xs="12" sm="12" md="3" class="flex-grow-1 flex-shrink-1">
         <LinkyInfo/>
       </v-col>
     </v-row>

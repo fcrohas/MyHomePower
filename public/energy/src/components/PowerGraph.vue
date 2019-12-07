@@ -4,7 +4,7 @@
 	<v-card class="mx-auto" max-width="100%" outlined>
 		<v-list-item three-line>
 			<v-list-item-content>
-				<div class="overline mb-4">Aujourd'hui</div>
+				<div class="overline mb-4">{{ getTitle }}</div>
 				<canvas id="power-chart"></canvas>
 			</v-list-item-content>
 		</v-list-item>
@@ -22,34 +22,58 @@ export default {
 	props: ['mode','groupby','from','to'],
 	watch: {
 		from() {
-			if (this.from && this.to) {
-				this.getPowerAtDate(this.from, this.to);
-			}
+			this.refreshData();
 		},
 		to() {
-			if (this.from && this.to) {
-				this.getPowerAtDate(this.from, this.to);
+			this.refreshData();
+		},
+		mode() {
+			this.refreshData();
+		}
+	},
+	computed: {
+		getTitle() {
+			if (this.from) {
+				return 'Moyenne journaliére';
+			} else {
+				return 'Aujourd\'hui';
 			}
 		}
 	},
 	methods: {
+		refreshData() {
+			if (this.from && this.to) {
+				if (this.mode === 'index') {
+					this.getIndexAtDate(this.from, this.to);
+				} else {
+					this.getPowerAtDate(this.from, this.to);
+				}
+			}
+		},
 		getIndexAtDate(from, to) {
 			this.powerOptions.data.labels = [];
+			this.powerOptions.data.datasets[0].label = 'Heure creuse';
 			this.powerOptions.data.datasets[0].data = [];
+			this.powerOptions.data.datasets[1].label = 'Heure pleine';
 			this.powerOptions.data.datasets[1].data = [];
 			return http.get(`/store/index/byrange/${from}/${to}/?groupby=${this.groupby}`)
 				.then( (response) => {
 					response.data.forEach( data => {
 						const time = new Date(data.time);
-						this.powerOptions.data.labels.push(time.getHours() + ' h');
+						this.powerOptions.data.labels.push(this.timeToLabel(time));
 						this.powerOptions.data.datasets[0].data.push(Math.round(data.HeureCreuse * 0.1320 / 10) / 100);
 						this.powerOptions.data.datasets[1].data.push(Math.round(data.HeurePleine * 0.1720 / 10) / 100);
 					});
+					if (this.myChart) {
+						this.myChart.update();
+					}
 				});
 		},
 		getPowerAtDate(from, to) {
 			this.powerOptions.data.labels = [];
+			this.powerOptions.data.datasets[0].label = 'Puissance KvA';
 			this.powerOptions.data.datasets[0].data = [];
+			this.powerOptions.data.datasets[1].label = '';
 			this.powerOptions.data.datasets[1].data = [];
 			return http.get(`/store/power/byrange/${from}/${to}/?groupby=${this.groupby}`)
 				.then( (response) => {
@@ -61,7 +85,7 @@ export default {
 						}
 					});
 					if (this.myChart) {
-						// this.myChart.data.update();
+						this.myChart.update();
 					}
 				});
 		},
@@ -72,7 +96,7 @@ export default {
 						break;
 				case 'h' : formated = time.getHours() + ' h';
 						break;
-				case 'd' : formated = time.getDate() + '/' + time.getMonth();
+				case 'd' : formated = time.getDate() + '/' + (time.getMonth() + 1);
 						break;
 			}
 			return formated;
@@ -89,9 +113,9 @@ export default {
 	mounted() {
 		const today = new Date();
 		const currentDay = today.getDay() + 1 < 10 ? '0' + (today.getDay() + 1) : (today.getDay() + 1);
-		const currentDayOfMonth = today.getFullYear() + '-' + (today.getMonth() + 1) + '-' + currentDay;
+		this.currentDayOfMonth = today.getFullYear() + '-' + (today.getMonth() + 1) + '-' + currentDay;
 		if (this.mode === 'index') {
-			this.getIndexAtDate(`${currentDayOfMonth} 00:00:00`,`${currentDayOfMonth} 23:59:59`).then( () => {
+			this.getIndexAtDate(`${this.currentDayOfMonth} 00:00:00`,`${this.currentDayOfMonth} 23:59:59`).then( () => {
 				this.createChart('power-chart', this.powerOptions);
 			});
 		} else {
@@ -104,6 +128,7 @@ export default {
 		return {
 			powerOptions: ChartOptions,
 			powerData: [],
+			currentDayOfMonth: ''
 		}
 	}
 }
