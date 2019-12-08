@@ -76,7 +76,7 @@ export default {
 	mounted() {
 		const today = new Date();
 		const firstDayOfMonth = today.getFullYear() + '-' + (today.getMonth() + 1) + '-01';
-		const currentDay = today.getDay() + 1 < 10 ? '0' + (today.getDay() + 1) : (today.getDay() + 1);
+		const currentDay = today.getDate() + 1 < 10 ? '0' + today.getDate() : today.getDate();
 		const currentDayOfMonth = today.getFullYear() + '-' + (today.getMonth() + 1) + '-' + currentDay;
 		this.getIndexAtDate(firstDayOfMonth, currentDayOfMonth);
 	},

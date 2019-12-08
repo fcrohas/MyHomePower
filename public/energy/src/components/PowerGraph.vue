@@ -112,7 +112,7 @@ export default {
 	},
 	mounted() {
 		const today = new Date();
-		const currentDay = today.getDay() + 1 < 10 ? '0' + (today.getDay() + 1) : (today.getDay() + 1);
+		const currentDay = today.getDate() < 10 ? '0' + today.getDate() : today.getDate();
 		this.currentDayOfMonth = today.getFullYear() + '-' + (today.getMonth() + 1) + '-' + currentDay;
 		if (this.mode === 'index') {
 			this.getIndexAtDate(`${this.currentDayOfMonth} 00:00:00`,`${this.currentDayOfMonth} 23:59:59`).then( () => {
