@@ -41,7 +41,7 @@
     </v-row>
     <v-row no-gutters>
       <v-col cols="12" xs="12" sm="12" md="12" lg="10">
-        <PowerGraph v-bind:mode="mode" groupby="1d" v-bind:from="dates[0]" v-bind:to="dates[1]"/>
+        <PowerGraph v-bind:mode="mode" groupby="1d" :from="fromIso" :to="toIso"/>
       </v-col>
     </v-row>
   </v-container>
@@ -61,7 +61,27 @@ export default {
     },
     todayISO() {
       return this.today.toISOString();
+    },
+    fromIso: {
+      get: function() {
+        // const from = new Date(this.dates[0]);
+        return this.dates[0]; // from.toISOString();
+      },
+      set: function() {
+
+      }
+    },
+    toIso: {
+      get: function() {
+        // const to = new Date(this.dates[1]);
+        return this.dates[1]; // to.toISOString();
+      },
+      set: function() {
+
+      }
     }
+  },
+  methods: {
   },
   data() {
     return {

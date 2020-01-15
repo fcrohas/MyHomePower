@@ -99,6 +99,18 @@ class Store {
 	    group by time(${groupby})
 	  `);
    }
+
+   findTemperatureByRange(startDate, endDate, room, groupby= '30m') {
+      return this.influx.query(`
+	    select 
+	    mean("Temperature") AS "temperature"
+	    from "hassio"."autogen"."°C"
+	    where time >= ${Influx.escape.stringLit(startDate)}
+	    and time <= ${Influx.escape.stringLit(endDate)}
+	    and "entity_id"='temperature_${room}_temperature'
+	    group by time(${groupby})
+	  `);
+   }
 }
 
 module.exports = Store;

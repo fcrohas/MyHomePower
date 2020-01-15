@@ -3,8 +3,11 @@
 <template>
   <v-container class="lighten-5 fill-height">
     <v-row no-gutters>
-      <v-col cols="12" class="flex-grow-0 flex-shrink-1">
-        <PowerIndicator/>
+      <v-col cols="12" xs="12" sm="12" md="6" lg="3">
+        <PowerIndicator mode="power"/>
+      </v-col>
+      <v-col cols="12" xs="12" sm="12" md="6" lg="3">
+        <PowerIndicator mode="index"/>
       </v-col>
     </v-row>
     <v-row no-gutters>

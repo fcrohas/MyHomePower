@@ -1,6 +1,6 @@
 import Vue from 'vue'
 import VueRouter from 'vue-router'
-import Home from '../views/Home.vue'
+import Prediction from '../views/Prediction.vue'
 import Dashboard from '../views/Dashboard.vue'
 import History from '../views/History.vue'
 
@@ -19,8 +19,8 @@ const routes = [
   },
   {
     path: '/prediction',
-    name: 'home',
-    component: Home
+    name: 'prediction',
+    component: Prediction
   },
   {
     path: '/about',

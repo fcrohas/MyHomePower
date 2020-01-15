@@ -1,14 +1,16 @@
 <style scoped>
 </style>
 <template>
-	<v-card class="mx-auto" max-width="100%" outlined>
-		<v-list-item three-line>
-			<v-list-item-content>
-				<div class="overline mb-4">{{ getTitle }}</div>
-				<canvas id="power-chart"></canvas>
-			</v-list-item-content>
-		</v-list-item>
-	</v-card>
+	<v-container>
+		<v-card class="mx-auto" max-width="100%" outlined>
+			<v-list-item three-line>
+				<v-list-item-content>
+					<div class="overline mb-4">{{ getTitle }}</div>
+					<canvas id="power-chart"></canvas>
+				</v-list-item-content>
+			</v-list-item>
+		</v-card>
+	</v-container>
 </template>
 
 <script>
@@ -102,8 +104,8 @@ export default {
 			return formated;
 		},
 		createChart(chartId, chartOptions) {
-			const ctx = document.getElementById(chartId);
-			this.myChart = new Chart(ctx, {
+			const canvas = document.getElementById(chartId);
+			this.myChart = new Chart(canvas, {
 				type: chartOptions.type,
 				data: chartOptions.data,
 				options: chartOptions.options,
@@ -111,15 +113,22 @@ export default {
 		}
 	},
 	mounted() {
+		this.powerOptions.type = 'bar';
 		const today = new Date();
-		const currentDay = today.getDate() < 10 ? '0' + today.getDate() : today.getDate();
-		this.currentDayOfMonth = today.getFullYear() + '-' + (today.getMonth() + 1) + '-' + currentDay;
+		today.setHours(0);
+		today.setMinutes(0);
+		today.setSeconds(0);
+		today.setMilliseconds(0);
+		this.currentDayOfMonth = today.toISOString();
+		today.setDate(today.getDate() + 1);
+		this.tomorrowDayOfMonth = today.toISOString();
 		if (this.mode === 'index') {
-			this.getIndexAtDate(`${this.currentDayOfMonth} 00:00:00`,`${this.currentDayOfMonth} 23:59:59`).then( () => {
-				this.createChart('power-chart', this.powerOptions);
+			this.getIndexAtDate(`${this.currentDayOfMonth}`,`${this.tomorrowDayOfMonth}`)
+				.then( () => {
+					this.createChart('power-chart', this.powerOptions);
 			});
 		} else {
-			this.getPowerAtDate(`${this.from} 00:00:00`,`${this.to} 23:59:59`).then( () => {
+			this.getPowerAtDate(`${this.from}`,`${this.to}`).then( () => {
 				this.createChart('power-chart', this.powerOptions);
 			});
 		}

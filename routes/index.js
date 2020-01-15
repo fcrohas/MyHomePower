@@ -44,4 +44,12 @@ router.get('/store/power/byrange/:start/:end', function(req, res, next) {
   });
 });
 
+router.get('/store/temperature/:room/byrange/:start/:end', function(req, res, next) {
+  store.findTemperatureByRange(req.params.start, req.params.end, req.params.room, req.query.groupby).then( (data) => {
+    res.send(data);
+  }).catch( (e) => {
+    res.status(400).send(e.message);
+  });
+});
+
 module.exports = router;

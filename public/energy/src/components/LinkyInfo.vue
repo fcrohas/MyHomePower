@@ -4,25 +4,27 @@
 }
 </style>
 <template>
-	<v-card class="mx-auto" max-width="100%" outlined>
-		<v-list-item three-line>
-			<v-list-item-content>
-				<div class="overline mb-4">Enedis</div>
-				<v-list-item-title class="headline mb-1">Information(s)</v-list-item-title>
-				<v-list-item-subtitle>Configuration du compteur</v-list-item-subtitle>
-				<v-card-text>
-					<div class='d-flex justify-space-between mb-4'><div class="pa-2"><b>Adresse</b></div><div class="pa-2">{{info.addr}}</div></div>
-					<div class='d-flex justify-space-between mb-4'><div class="pa-2"><b>Option tarifaire</b></div><div class="pa-2">{{info.tarifSouscrit}}</div></div>
-					<div class='d-flex justify-space-between mb-4'><div class="pa-2"><b>Tarif en cours</b></div><div class="pa-2">{{info.tarifEnCours}}</div></div>
-					<div class='d-flex justify-space-between mb-4'><div class="pa-2"><b>Offre souscrite</b></div><div class="pa-2">{{info.offreSouscrite}} KvA</div></div>
-					<div class='d-flex justify-space-between mb-4'><div class="pa-2"><b>Intensité max.</b></div><div class="pa-2">{{info.intensiteMax}} A</div></div>
-					<div class='d-flex justify-space-between mb-4'><div class="pa-2"><b>Index HC</b></div><div class="pa-2">{{info.indexHeureCreuse}}</div></div>
-					<div class='d-flex justify-space-between mb-4'><div class="pa-2"><b>Index HP</b></div><div class="pa-2">{{info.indexHeurePleine}}</div></div>
-					<div class='d-flex justify-space-between mb-4'><div class="pa-2"><b>Status compteur</b></div><div class="pa-2">{{info.status}}</div></div>
-				</v-card-text>
-			</v-list-item-content>
-		</v-list-item>
-	</v-card>
+	<v-container>
+		<v-card class="mx-auto" max-width="100%" outlined>
+			<v-list-item three-line>
+				<v-list-item-content>
+					<div class="overline mb-4">Enedis</div>
+					<v-list-item-title class="headline mb-1">Information(s)</v-list-item-title>
+					<v-list-item-subtitle>Configuration du compteur</v-list-item-subtitle>
+					<v-card-text>
+						<v-text-field label="Adresse" outlined dense readonly v-model="info.addr" />
+						<v-text-field label="Option tarifaire" outlined dense readonly v-model="info.tarifSouscrit" />
+						<v-text-field label="Tarif en cours" outlined dense readonly v-model="info.tarifEnCours" />
+						<v-text-field label="Offre souscrite (KvA)" outlined dense readonly v-model="info.offreSouscrite" />
+						<v-text-field label="Intensité max. (A)" outlined dense readonly v-model="info.intensiteMax" />
+						<v-text-field label="Index heure creuse" outlined dense readonly v-model="info.indexHeureCreuse" />
+						<v-text-field label="Index heure pleine" outlined dense readonly v-model="info.indexHeurePleine" />
+						<v-text-field label="status compteur" outlined dense readonly v-model="info.status" />
+					</v-card-text>
+				</v-list-item-content>
+			</v-list-item>
+		</v-card>
+	</v-container>
 </template>
 
 <script>
