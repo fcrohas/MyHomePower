@@ -103,7 +103,6 @@ export default {
 				w: 0,
 				startY: 0
 			};
-			let drag = false;
 			canvas.addEventListener('pointerdown', evt => {
 				const points = chart.getElementsAtEventForMode(evt, 'index', {
 					intersect: false
@@ -112,25 +111,25 @@ export default {
 				const rect = canvas.getBoundingClientRect();
 				selectionRect.startX = evt.clientX - rect.left;
 				selectionRect.startY = chart.chartArea.top;
-				drag = true;
-				// save points[0]._index for filtering
+				this.drag = true;
+				selectionContext.fillStyle = '#00AA00';
 			});
 			canvas.addEventListener('pointermove', evt => {
 				const rect = canvas.getBoundingClientRect();
-				if (drag) {
+				if (this.drag) {
 					const rect = canvas.getBoundingClientRect();
 					selectionRect.w = (evt.clientX - rect.left) - selectionRect.startX;
-					selectionContext.globalAlpha = 0.5;
+					selectionContext.globalAlpha = 0.4;
 					selectionContext.clearRect(0, 0, canvas.width, canvas.height);
 					selectionContext.fillRect(selectionRect.startX,
-						selectionRect.startY,
+						selectionRect.startY + 16,
 						selectionRect.w,
 						chart.chartArea.bottom - chart.chartArea.top);
 				} else {
 					selectionContext.clearRect(0, 0, canvas.width, canvas.height);
 					let x = evt.clientX - rect.left;
 					if (x > chart.chartArea.left) {
-						selectionContext.fillRect(x, chart.chartArea.top, 1, chart.chartArea.bottom - chart.chartArea.top);
+						selectionContext.fillRect(x, chart.chartArea.top + 16, 1, chart.chartArea.bottom - chart.chartArea.top);
 					}
 				}
 			});
@@ -138,37 +137,63 @@ export default {
 				const points = chart.getElementsAtEventForMode(evt, 'index', {
 					intersect: false
 				});
-				drag = false;
-				/*eslint no-console: ["error", { allow: ["warn", "error"] }] */
-				console.warn('implement filter between ' + this.powerOptions.data.labels[startIndex] + ' and ' + this.powerOptions.data.labels[points[0]._index]);
-				this.selectPoints(this.powerOptions.data.labels[startIndex], this.powerOptions.data.labels[points[0]._index]);  
+				this.drag = false;
+				selectionContext.fillStyle = '#000000';
+				const index = points.pop()._index;
+				if (startIndex !== index) {
+					this.selectPoints({
+							time: this.powerOptions.data.labels[startIndex], 
+							power: Math.round(this.powerOptions.data.datasets[0].data[startIndex])
+						}, {
+							time: this.powerOptions.data.labels[index],
+							power: Math.round(this.powerOptions.data.datasets[0].data[index])
+						});  
+				} else {
+					this.clickPoint({
+						time: this.powerOptions.data.labels[index],
+						power: Math.round(this.powerOptions.data.datasets[0].data[index])
+					});
+				}
 			});
+		},
+		showRange(start, stop) {
+			let startMeta = {};
+			let stopMeta = {};
+			let x1 = 0;
+			let x2 = 0;
+			// find indexes
+			for (let i = 0; i < this.powerOptions.data.labels.length; i++) {
+				if (this.powerOptions.data.labels[i] == start) {
+					startMeta = this.myChart.getDatasetMeta(0);
+					x1 = startMeta.data[i]._model.x;
+				}
+				if (this.powerOptions.data.labels[i] == stop) {
+					stopMeta = this.myChart.getDatasetMeta(0);
+					x2 = stopMeta.data[i]._model.x;
+				}
+			}
+			// draw selection range
+			const selectionContext = this.overlay.getContext('2d');
+			selectionContext.clearRect(0, 0, this.canvas.width, this.canvas.height);
+			selectionContext.fillStyle = '#00AA00';
+			selectionContext.globalAlpha = 0.4;
+			selectionContext.fillRect(x1,
+				this.myChart.chartArea.top + 16,
+				x2 - x1,
+				this.myChart.chartArea.bottom - this.myChart.chartArea.top);
 		},
 		handleResize() {
 			this.overlay.width = this.canvas.width;
 			this.overlay.height = this.canvas.height;
 		},
-		timeClick(event) {
-			const chartElem = this.myChart.getElementsAtEventForMode(event, 'index', {
-				intersect: false
-			});
-			const index = chartElem.pop()._index;
-			/*eslint no-console: ["error", { allow: ["warn", "error"] }] */
-			// console.log('timeClick', )
-			this.clickPoint({
-				time: this.powerOptions.data.labels[index],
-				power: Math.round(this.powerOptions.data.datasets[0].data[index])
-			});
-		},
 		createChart(chartId, chartOptions) {
 			this.canvas = document.getElementById(chartId);
-			chartOptions.options.onClick = this.timeClick;
 			this.myChart = new Chart(this.canvas, {
 				type: chartOptions.type,
 				data: chartOptions.data,
 				options: chartOptions.options,
 			});
-			// this.addOverlay(this.canvas, this.myChart);
+			this.addOverlay(this.canvas, this.myChart);
 		}
 	},
 	// bind event handlers to the `handleResize` method (defined below)
@@ -192,7 +217,9 @@ export default {
 		return {
 			powerOptions: ChartOptions,
 			powerData: [],
-			currentDayOfMonth: ''
+			rangeSelection: {},
+			currentDayOfMonth: '',
+			drag: false
 		}
 	}
 }

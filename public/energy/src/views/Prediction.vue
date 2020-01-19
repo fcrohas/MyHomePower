@@ -1,8 +1,8 @@
 <style scoped>
 </style>
 <template>
-  <v-container class="lighten-5 fill-height">
-    <v-row no-gutters>
+  <v-container fluid class="lighten-5 fill-height">
+    <v-row no-gutters dense>
       <v-col cols="12" xs="12" sm="5" md="3" lg="3">
           <v-menu
           ref="menu"
@@ -41,13 +41,21 @@
       <v-col cols="12" xs="12" sm="2" md="2" lg="2">
           <v-btn text color="primary" :disabled="hasNext" @click="next()">Suivant</v-btn>
       </v-col>
-      <v-spacer></v-spacer>
-    </v-row>
-    <v-row no-gutters>
-      <v-col cols="12" xs="12" sm="12" md="12" lg="10">
-        <GraphTagger group-by="1m" v-bind:date="date" v-bind:start-time="startTime" v-bind:end-time="endTime" :click-point="pointClicked" :select-points="rangeClicked"/>
+      <v-col cols="12" xs="12" sm="1" md="2" lg="1">
         <v-btn text color="primary" @click="loadPoints()">Load</v-btn>
+      </v-col>
+      <v-col cols="12" xs="12" sm="1" md="2" lg="1">
         <v-btn text color="primary" @click="savePoints()">Save</v-btn>
+      </v-col>
+      <v-col cols="12" xs="12" sm="1" md="2" lg="1">
+        <v-btn text color="primary" @click="learn()">Learn</v-btn>
+      </v-col>
+    </v-row>
+    <v-row no-gutters dense>
+      <v-col cols="12" xs="12" sm="9" md="9" lg="7">
+        <GraphTagger ref="tagger" group-by="1m" v-bind:date="date" v-bind:start-time="startTime" v-bind:end-time="endTime" :click-point="pointClicked" :select-points="rangeClicked"/>
+      </v-col>
+      <v-col cols="12" xs="12" sm="3" md="3" lg="5">
         <v-simple-table dense>
           <template v-slot:default>
             <table>
@@ -61,24 +69,34 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-bind:key="index" v-for="(point, index) in points">
+                <tr v-bind:key="index" v-for="(point, index) in paginatedData">
                    <td>
-                    <v-btn v-on:click="deletePoints(point)" v-bind:depressed="true"><v-icon color="red" center>mdi-trash-can-outline</v-icon></v-btn>
+                    <v-icon v-on:click="deletePoints(point)" color="red" center>mdi-trash-can-outline</v-icon>
+                    <v-icon v-on:click="$refs.tagger.showRange(point.start, point.end)" color="lightgrey" center>mdi-eye</v-icon>
                    </td>
                    <td v-if="point!=undefined">
-                    <v-chip class="mr-2">
-                      <v-icon left>mdi-alarm-check</v-icon>{{point.start}}
-                    </v-chip>
+                    <v-chip class="mr-1" dense>{{point.start}}</v-chip>
                    </td>
                    <td v-if="point!=undefined">
-                    <v-chip class="mr-2">
-                      <v-icon left>mdi-alarm-check</v-icon>{{point.end}}
-                    </v-chip>
+                    <v-chip class="mr-1" dense>{{point.end}}</v-chip>
                    </td>
                    <td v-if="point!=undefined">{{point.power}} vA</td>
                    <td><v-text-field dense v-model="point.tags"></v-text-field></td>
                 </tr>
               </tbody>
+              <tfoot>
+                <tr>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                  <td>
+                    <v-btn v-on:click="prevPage" v-bind:depressed="true"><v-icon color="red" center>mdi-previous</v-icon></v-btn>
+                  </td>
+                  <td>
+                    <v-btn v-on:click="nextPage" v-bind:depressed="true"><v-icon color="red" center>mdi-next</v-icon></v-btn>
+                  </td>
+                </tr>
+              </tfoot>
             </table>
           </template>
         </v-simple-table>
@@ -105,9 +123,35 @@ export default {
     },
     hasNext() {
       return this.startTime === '22:00:00';
+    },
+    pageCount() {
+      let l = this.points.length;
+      let s = this.size;
+      return Math.ceil(l/s);
+    },
+    paginatedData() {
+      const start = this.pageNumber * this.size;
+      const end = start + this.size;
+      return this.points.slice(start, end);
     }
   },
   methods: {
+    nextPage(){
+         this.pageNumber++;
+      },
+    prevPage(){
+        this.pageNumber--;
+      },
+    learn() {
+      http.post('/learn/data/learn/power/' + this.date, this.points)
+          .then( (response) => {
+            /*eslint no-console: ["error", { allow: ["warn", "error"] }] */
+            console.warn('save data', response);
+          }).catch((err) => {
+            /*eslint no-console: ["error", { allow: ["warn", "error"] }] */
+            console.error('Error on save', err);
+          });
+    },
     savePoints() {
       http.post('/learn/data/power/' + this.date, this.points)
           .then( (response) => {
@@ -133,6 +177,10 @@ export default {
       this.points.splice(this.points.indexOf(point), 1);
     },
     next() {
+      if (this.points.length > 0) {
+        this.savePoints();
+        this.points = [];
+      }
       let hour = new Number(this.endTime.substr(0, this.endTime.indexOf(':')));
       this.startTime = this.endTime;
       this.endTime = ((hour+2) < 10 ? '0'+(hour+2) : (hour+2)) +':00:00';
@@ -141,29 +189,25 @@ export default {
       }
     },
     previous() {
+      if (this.points.length > 0) {
+        this.savePoints();
+        this.points = [];
+      }
       let hour = new Number(this.startTime.substr(0, this.startTime.indexOf(':')));
       this.endTime = this.startTime;
       this.startTime = ((hour-2) < 10 ? '0'+(hour-2) : (hour-2)) +':00:00';
     },
     pointClicked(point) {
-      /*eslint no-console: ["error", { allow: ["warn", "error"] }] */
-      console.warn('POint data', point);
-      if (!this.currentTags.start) {
-        this.currentTags.start = point.time;
-      } else if (!this.currentTags.end) {
-        this.currentTags.end = point.time;
-      }
-      if (this.currentTags.start && this.currentTags.end) {
-        this.points.push({start: this.currentTags.start, end: this.currentTags.end, power: 0, tags: ""});
-        this.currentTags = {};
-      }
+      this.points.push({start: point.time, end: point.time, power: point.power, tags: ""});
     },
-    rangeClicked() {
-
+    rangeClicked(start, stop) {
+      this.points.push({start: start.time, end: stop.time, power: (start.power + stop.power) / 2, tags: ""});
     }
   },
   data() {
     return {
+      pageNumber: 0,
+      size: 5,
       date: '2019-12-01',
       menu: false,
       today: new Date(),
