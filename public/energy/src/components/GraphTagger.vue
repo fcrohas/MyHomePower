@@ -55,12 +55,30 @@ export default {
 		}
 	},
 	methods: {
+		formatTime(startTime, endTime) {
+			// Format string
+			const startDateTime = new Date(this.date);
+			let times = startTime.split(':');
+			startDateTime.setHours(times[0]);
+			startDateTime.setMinutes(times[1]);
+			startDateTime.setSeconds(times[2]);
+			startDateTime.setMilliseconds(0);
+			const endDateTime = new Date(this.date);
+			times = endTime.split(':');
+			endDateTime.setHours(times[0]);
+			endDateTime.setMinutes(times[1]);
+			endDateTime.setSeconds(times[2]);
+			endDateTime.setMilliseconds(0);
+			return {start: startDateTime.toISOString(), end: endDateTime.toISOString()};
+		},
 		refreshData() {
-			if (this.date && this.startTime && this.endTime) {
-				this.getPowerAtDate(`${this.date} ${this.startTime}`,`${this.date} ${this.endTime}`);
+			if (this.startTime && this.endTime) {
+				const dateRange = this.formatTime(this.startTime, this.endTime);
+				this.getPowerAtDate(`${dateRange.start}`,`${dateRange.end}`);
 			}
 		},
 		getPowerAtDate(from, to) {
+			this.powerOptions.data.timeRef = [];
 			this.powerOptions.data.labels = [];
 			this.powerOptions.data.datasets[0].label = 'Puissance KvA';
 			this.powerOptions.data.datasets[0].data = [];
@@ -71,6 +89,7 @@ export default {
 					response.data.forEach( data => {
 						if (data.powerkva) {
 							const time = new Date(data.time);
+							this.powerOptions.data.timeRef.push(time);
 							this.powerOptions.data.labels.push(this.timeToLabel(time));
 							this.powerOptions.data.datasets[0].data.push(data.powerkva);
 						}
@@ -142,15 +161,15 @@ export default {
 				const index = points.pop()._index;
 				if (startIndex !== index) {
 					this.selectPoints({
-							time: this.powerOptions.data.labels[startIndex], 
+							time: this.powerOptions.data.timeRef[startIndex], 
 							power: Math.round(this.powerOptions.data.datasets[0].data[startIndex])
 						}, {
-							time: this.powerOptions.data.labels[index],
+							time: this.powerOptions.data.timeRef[index],
 							power: Math.round(this.powerOptions.data.datasets[0].data[index])
 						});  
 				} else {
 					this.clickPoint({
-						time: this.powerOptions.data.labels[index],
+						time: this.powerOptions.data.timeRef[index],
 						power: Math.round(this.powerOptions.data.datasets[0].data[index])
 					});
 				}
@@ -163,11 +182,11 @@ export default {
 			let x2 = 0;
 			// find indexes
 			for (let i = 0; i < this.powerOptions.data.labels.length; i++) {
-				if (this.powerOptions.data.labels[i] == start) {
+				if (this.powerOptions.data.timeRef[i] == start) {
 					startMeta = this.myChart.getDatasetMeta(0);
 					x1 = startMeta.data[i]._model.x;
 				}
-				if (this.powerOptions.data.labels[i] == stop) {
+				if (this.powerOptions.data.timeRef[i] == stop) {
 					stopMeta = this.myChart.getDatasetMeta(0);
 					x2 = stopMeta.data[i]._model.x;
 				}
@@ -204,12 +223,10 @@ export default {
 		window.removeEventListener('resize', this.handleResize)
 	},
 	mounted() {
-		const today = new Date();
-		const currentDay = today.getDate() < 10 ? '0' + today.getDate() : today.getDate();
-		this.currentDayOfMonth = today.getFullYear() + '-' + (today.getMonth() + 1) + '-' + currentDay;
 		this.powerOptions.type = 'line';
 		this.powerOptions.options.legend = { display: false };
-		this.getPowerAtDate(`${this.date} ${this.startTime}`,`${this.date} ${this.endTime}`).then( () => {
+		const dateRange = this.formatTime(this.startTime, this.endTime);
+		this.getPowerAtDate(`${dateRange.start}`,`${dateRange.end}`).then( () => {
 			this.createChart('power-chart', this.powerOptions);
 		});
 	},

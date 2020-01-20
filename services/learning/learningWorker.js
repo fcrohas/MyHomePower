@@ -20,20 +20,35 @@ class MachineLearning {
 
 	createDataset(dataTags) {
 		return new Promise( (resolve, reject) => {
-			resolve();
+			const today = new Date(workerData);
+			today.setHours(0);
+			today.setMinutes(0);
+			today.setSeconds(0);
+			today.setMilliseconds(0);
+			this.currentDayOfMonth = today.toISOString();
+			today.setDate(today.getDate() + 1);
+			this.tomorrowDayOfMonth = today.toISOString();
+			// select power range
+			this.store.findPowerByRange(this.currentDayOfMonth, this.tomorrowDayOfMonth, '1m').then ( (points) => {
+				// Merge point with tagged data
+				console.log( 'Point(0)', points[0],'tags=',dataTags[0]);
+
+				resolve();
+			}).catch( (err) => {
+				reject(err);
+			});
 		});
 	}
 
 	extractDataRange() {
 		return new Promise( (resolve, reject) => {
 			let datas = [];
-
-			fs.access(workerData + "/data.json", fs.F_OK, (err) => {
+			fs.access("datas/" + workerData + "/data.json", fs.F_OK, (err) => {
 			  if (err) {
 			  	reject('Unable to find data at date ' + workerData + 'Error:' + err);
 			  }
 			  // file exists
-			  fs.readFile(workerData + "/data.json", "utf-8", (err, data) => {
+			  fs.readFile("datas/" + workerData + "/data.json", "utf-8", (err, data) => {
 				data = JSON.parse(data);
 				console.log('datas=', data);
 				resolve(data);
