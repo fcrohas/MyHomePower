@@ -1,8 +1,10 @@
 import Vue from 'vue'
 import VueRouter from 'vue-router'
 import Prediction from '../views/Prediction.vue'
+import Learning from '../views/Learning.vue'
 import Dashboard from '../views/Dashboard.vue'
 import History from '../views/History.vue'
+import Home from '../views/Home.vue'
 
 Vue.use(VueRouter)
 
@@ -21,6 +23,16 @@ const routes = [
     path: '/prediction',
     name: 'prediction',
     component: Prediction
+  },
+  {
+    path: '/learning',
+    name: 'learning',
+    component: Learning
+  },
+  {
+    path: '/home',
+    name: 'home',
+    component: Home
   },
   {
     path: '/about',

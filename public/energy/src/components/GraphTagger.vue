@@ -10,6 +10,7 @@
 			<v-list-item-content>
 				<div class="overline mb-4">{{ getTitle }}</div>
 				<canvas id="overlay" class="overlay"></canvas>
+				<canvas id="visualizer" class="overlay"></canvas>
 				<canvas id="power-chart"></canvas>
 			</v-list-item-content>
 		</v-list-item>
@@ -162,44 +163,114 @@ export default {
 				if (startIndex !== index) {
 					this.selectPoints({
 							time: this.powerOptions.data.timeRef[startIndex], 
-							power: Math.round(this.powerOptions.data.datasets[0].data[startIndex])
+							power: Math.round(this.powerOptions.data.datasets[0].data[startIndex]),
+							index: startIndex
 						}, {
 							time: this.powerOptions.data.timeRef[index],
-							power: Math.round(this.powerOptions.data.datasets[0].data[index])
+							power: Math.round(this.powerOptions.data.datasets[0].data[index]),
+							index: index
 						});  
 				} else {
 					this.clickPoint({
 						time: this.powerOptions.data.timeRef[index],
-						power: Math.round(this.powerOptions.data.datasets[0].data[index])
+						power: Math.round(this.powerOptions.data.datasets[0].data[index]),
+						index: index
 					});
 				}
 			});
+		},
+		addVisualizer(canvas) {
+			this.viewer = document.getElementById('visualizer');
+			this.viewer.width = canvas.width;
+			this.viewer.height = canvas.height;
+			// const viewContext = this.overlay.getContext('2d');
 		},
 		showRange(start, stop) {
 			let startMeta = {};
 			let stopMeta = {};
 			let x1 = 0;
 			let x2 = 0;
+			const isDate = start instanceof Date;
+			if (!isDate) {
+				start = new Date(start);
+				stop = new Date(stop);
+			}
 			// find indexes
 			for (let i = 0; i < this.powerOptions.data.labels.length; i++) {
-				if (this.powerOptions.data.timeRef[i] == start) {
+				if (this.powerOptions.data.timeRef[i].toISOString() === start.toISOString()) {
 					startMeta = this.myChart.getDatasetMeta(0);
 					x1 = startMeta.data[i]._model.x;
 				}
-				if (this.powerOptions.data.timeRef[i] == stop) {
+				if (this.powerOptions.data.timeRef[i].toISOString() === stop.toISOString()) {
 					stopMeta = this.myChart.getDatasetMeta(0);
 					x2 = stopMeta.data[i]._model.x;
 				}
 			}
 			// draw selection range
 			const selectionContext = this.overlay.getContext('2d');
-			selectionContext.clearRect(0, 0, this.canvas.width, this.canvas.height);
+			selectionContext.clearRect(0, 0, this.overlay.width, this.overlay.height);
 			selectionContext.fillStyle = '#00AA00';
 			selectionContext.globalAlpha = 0.4;
 			selectionContext.fillRect(x1,
 				this.myChart.chartArea.top + 16,
 				x2 - x1,
 				this.myChart.chartArea.bottom - this.myChart.chartArea.top);
+		},
+		clearPoints() {
+			const viewContext = this.viewer.getContext('2d');
+			viewContext.clearRect(0, 0, this.viewer.width, this.viewer.height);
+		},
+		showPointsRange(points, clear) {
+			const colorTable = ['red','yellow','orange','purple','brown','blue','green'];
+			const tagsTable = [];
+			const viewContext = this.viewer.getContext('2d');
+			if (clear) {
+				viewContext.clearRect(0, 0, this.viewer.width, this.viewer.height);
+			}
+			points.forEach( point => {
+				if (point.show == false) {
+					return;
+				}
+				const start = new Date(point.start);
+				const stop = new Date(point.end);
+				let startMeta = {};
+				let stopMeta = {};
+				let x1 = -1;
+				let x2 = -1;
+				let index = tagsTable.indexOf(point.tags);
+				if (index === -1) {
+					tagsTable.push(point.tags);
+					index = tagsTable.indexOf(point.tags);
+				}
+				// find indexes
+				for (let i = 0; i < this.powerOptions.data.labels.length; i++) {
+					if (this.powerOptions.data.timeRef[i].toISOString() === start.toISOString()) {
+						startMeta = this.myChart.getDatasetMeta(0);
+						x1 = startMeta.data[i]._model.x;
+					}
+					if (this.powerOptions.data.timeRef[i].toISOString() === stop.toISOString()) {
+						stopMeta = this.myChart.getDatasetMeta(0);
+						x2 = stopMeta.data[i]._model.x;
+					}
+				}
+				// When en point not found set it to last
+				if (x2 == -1) {
+					stopMeta = this.myChart.getDatasetMeta(0);
+					x2 = stopMeta.data[stopMeta.data.length - 1]._model.x;
+				}
+				if ((x1!=-1) && (x2!=-1)) {
+					if (point.color === undefined) {
+						viewContext.fillStyle = colorTable[index];
+					} else {
+						viewContext.fillStyle = point.color;
+					}
+					viewContext.globalAlpha = 0.4;
+					viewContext.fillRect(x1,
+						this.myChart.chartArea.top + 16,
+						x2 - x1,
+						this.myChart.chartArea.bottom - this.myChart.chartArea.top);
+				}
+			});
 		},
 		handleResize() {
 			this.overlay.width = this.canvas.width;
@@ -213,6 +284,7 @@ export default {
 				options: chartOptions.options,
 			});
 			this.addOverlay(this.canvas, this.myChart);
+			this.addVisualizer(this.canvas, this.myChart);
 		}
 	},
 	// bind event handlers to the `handleResize` method (defined below)

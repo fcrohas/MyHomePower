@@ -16,6 +16,7 @@
     "mongodb": "^2.2.0",
     "morgan": "~1.9.1",
     "node-sass-middleware": "0.11.0",
-    "serialport": "^8.0.5"
+    "serialport": "^8.0.5",
+    "socket.io": "^2.3.0"
   }
 }

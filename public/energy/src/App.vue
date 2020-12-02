@@ -45,7 +45,9 @@ export default {
       items: [
         { title: 'Dashboard', icon: 'mdi-home-city', link: '/' },
         { title: 'History', icon: 'mdi-account', link: '/history' },
-        { title: 'Prediction', icon: 'mdi-account-group-outline', link: '/prediction' },
+        { title: 'Prediction', icon: 'mdi-eye', link: '/prediction' },
+        { title: 'Learning', icon: 'mdi-brain', link: '/learning' },
+        { title: 'House', icon: 'mdi-home', link: '/home' },
       ],
       mini: true,
     }
