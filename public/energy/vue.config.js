@@ -4,9 +4,9 @@ module.exports = {
   ],
   "devServer": {
     "disableHostCheck": true,
-    "host": "192.168.2.190", 
+    "host": "localhost", 
     "port": "8080",
-    "proxy": "http://192.168.2.190:3000"
+    "proxy": "http://localhost:3000"
   },
   chainWebpack: config => {
      const svgRule = config.module.rule('svg')

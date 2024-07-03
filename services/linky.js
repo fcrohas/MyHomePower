@@ -1,9 +1,17 @@
-const SerialPort = require('serialport');
+const { SerialPort, SerialPortMock } = require('serialport');
 const Readline = require('@serialport/parser-readline');
+const fs = require('fs');
 
 class Linky {
    constructor(opts, store) {
-     this.port = new SerialPort(opts.device, { baudRate: 1200, dataBits: 7, stopBits: 1, parity: 'even'  });
+	 if (fs.existsSync(opts.device)) {
+		// Open the serial port
+	    this.port = new SerialPort({ path: opts.device, baudRate: 1200, dataBits: 7, stopBits: 1, parity: 'even'});
+	 } else {
+		//If the serial port is not found, use a null device
+		SerialPortMock.binding.createPort('/dev/dummy');
+		this.port = new SerialPortMock({path: "/dev/dummy",baudRate: 1200, dataBits: 7, stopBits: 1, parity: 'even'});
+	 }
      this.linkyData = {};
      this.store = store;
      this.isNew = false;

@@ -92,10 +92,11 @@ class Store {
    findPowerByRange(startDate, endDate, groupby= '30m') {
       return this.influx.query(`
 	    select 
-	    mean(power) AS "powerkva"
-	    from liny_datas
+	    mean(value) AS "powerkva"
+	    from "home_assistant"."autogen"."W"
 	    where time >= ${Influx.escape.stringLit(startDate)}
 	    and time <= ${Influx.escape.stringLit(endDate)}
+		and "entity_id"='solarman_activepower_load_sys'
 	    group by time(${groupby})
 	  `);
    }
@@ -104,7 +105,7 @@ class Store {
       return this.influx.query(`
 	    select 
 	    mean("Temperature") AS "temperature"
-	    from "hassio"."autogen"."°C"
+	    from "home_assistant"."autogen"."°C"
 	    where time >= ${Influx.escape.stringLit(startDate)}
 	    and time <= ${Influx.escape.stringLit(endDate)}
 	    and "entity_id"='temperature_${room}_temperature'
