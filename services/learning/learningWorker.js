@@ -11,14 +11,14 @@ class MachineLearning {
 		this.store = new Store(config);
 		this.maxTags = 7;
 		this.inputMax = 10000;
-		this.inputMin = 340;  
+		this.inputMin = 290;  
 		this.outputMax = 8192;
 		this.outputMin = 0;
 		this.MIN_IN_CLASS = 200;
 		this.CLASS_COUNT = 14;
 		this.WINDOW_SIZE = 60;
 		this.TIMESTEPS = 6;
-		this.tags = ['radiateur','chauffe-eau','frigo','lave-vaisselle','lave-linge','four','plaque-cuisson','audiovisuel','climatiseur','soufflant','micro-onde','tele','ps4','veille'].reverse();
+		this.tags = ['radiateur','chauffe-eau','frigo','lave-vaisselle','lave-linge','four','plaque-cuisson','audiovisuel','climatiseur','soufflant','forage','micro-onde','tv','ordinateur','ps4','veille'].reverse();
 		if (parentPort != null) {
 			this.start();
 		} else {
@@ -36,22 +36,29 @@ class MachineLearning {
 			today.setSeconds(0);
 			today.setMilliseconds(0);
 			this.currentDayOfMonth = today.toISOString();
-			const tomorrow = new Date(workerData);
-			tomorrow.setHours(0);
-			tomorrow.setMinutes(0);
-			tomorrow.setSeconds(0);
+			const dayCount = 0; // Change this value to change the number of days in the future
+			
+			// Create a new date object for tomorrow and set it to 00:00:00 on the same day
+			let tomorrow = new Date(workerData);
+			tomorrow.setHours(23);
+			tomorrow.setMinutes(59);
+			tomorrow.setSeconds(59);
 			tomorrow.setMilliseconds(0);
-			tomorrow.setDate(tomorrow.getDate() + 5);
+			tomorrow.setDate(tomorrow.getDate() + dayCount);
 			this.tomorrowDayOfMonth = tomorrow.toISOString();
 			console.log('Extract from', this.currentDayOfMonth, 'to', this.tomorrowDayOfMonth);
-			const promise = [];
-		    promise.push( this.extractDataRange(this.formatDate(today)));
-			for (let i = 0; i < 5; i++) {
+			
+			// Create an array to hold the promises
+			const promiseArray = [];
+			promiseArray.push(this.extractDataRange(this.formatDate(today)));
+			
+			for (let i = 0; i < dayCount; i++) {
 			   today.setDate(today.getDate() + 1);
 			   console.log('Promise',i,' extract date', this.formatDate(today));
-			   promise.push( this.extractDataRange(this.formatDate(today)));
+			   promiseArray.push(this.extractDataRange(this.formatDate(today)));
 			}
-			return Promise.all(promise);
+			
+			return Promise.all(promiseArray);
 		}).then( (results) => {
 			let dataTags = [];
 			let labels = [];
@@ -120,15 +127,18 @@ class MachineLearning {
 				case 'micro-onde' :
 					result += 1024; 
 					break;
-				case 'tele' :
+				case 'tv' :
 					result += 2048; 
 					break;
-				case 'ps4' :
+				case 'ordinateur' :
 					result += 4096;
 					break;
-				case 'veille' :
-					result += 0;
+				case 'forage' :
+					result += 8192;
 					break;
+				case 'veille' :
+				result += 0;
+				break;
 			}
 		}
 		return result;
@@ -160,7 +170,7 @@ class MachineLearning {
 			const average = filtered.reduce( (a,b) => a+b) / filtered.length * 100.0;
 			if (Math.round(average) > 5) {
 				// console.log('class', this.tags[i / this.WINDOW_SIZE], 'percent', Math.round(average), 'mask', classMask.map( value => (value>0.5)?1:0));
-		    	console.log('classMask', classMask,'name', this.labels[i / this.WINDOW_SIZE]);
+		    	// console.log('classMask', classMask,'name', this.labels[i / this.WINDOW_SIZE]);
 				outputTags.push({
 					name: this.labels[i / this.WINDOW_SIZE], 
 					percent: Math.round(average), 
@@ -375,17 +385,9 @@ class MachineLearning {
 					}
 				});
 				// Compute distinct tags for day
-				const tags = [];
-				filter.forEach( f => {
-					const fTags = f.tags.split(' ');
-					fTags.forEach ( ft => {
-						if (tags.indexOf(ft) == -1) {
-							tags.push(ft);
-						}
-					});
-				});
+				const tags = new Set(filter.flatMap(({tags}) => tags.split(' ')));
 				// save tags label for day
-				fs.writeFile("datas/" + date + "/label.json", JSON.stringify(tags), (err) => {
+				fs.writeFile("datas/" + date + "/label.json", JSON.stringify([...tags]), (err) => {
 					console.log('On ', date, ' Check & filter duplicate ', data.length,' / ', filter.length, 'labels count', tags.length);
 					parentPort.postMessage('On ' + date + ' extract ' + filter.length + ' data with ' + tags.length + ' labels');
 					resolve({datas: filter, labels: tags});
@@ -665,6 +667,7 @@ class MachineLearning {
 			for (let i=0; i<this.CLASS_COUNT; i++) outCount[i]=0;
 			// filter and limit to output count
 			dataset.forEach( ds => {
+				console.log(ds)
 				// sum ouput
 				ds.out.forEach( (val, index) => {
 					if (val !== undefined) {
@@ -765,8 +768,8 @@ class MachineLearning {
 			}
 			async function train() {
 			  await model.fit(normalizedInputs, yms, {
-			    epochs: 300,
-			    bachSize: 64,
+			    epochs: 30,
+			    bachSize: 8,
 			    shuffle: true,
 			    validationSplit: 0.7,
 			    // Add the tensorBoard callback here.
@@ -776,7 +779,7 @@ class MachineLearning {
 			  });
 			}
 			async function save() {
-				await model.save('file:///home/fcr/projects/node-enedis/datas/models/power-devices');
+				await model.save('file:///home/fcr/projects/MyHomePower/datas/models/power-devices');
 			}
 			train().then( () => {
 				save().then( () => {
@@ -794,7 +797,7 @@ class MachineLearning {
 	}
 
 	async load() {
-		this.model = await tf.loadLayersModel('file:///home/fcr/projects/node-enedis/datas/models/power-devices/model.json');
+		this.model = await tf.loadLayersModel('file:///home/fcr/projects/MyHomePower/datas/models/power-devices/model.json');
 		this.labels = JSON.parse(fs.readFileSync('datas/models/power-devices/labels.json', 'utf8'));
 		this.CLASS_COUNT = this.labels.length;
 		console.log('model loaded !');

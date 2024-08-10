@@ -1,6 +1,6 @@
 {
 	"database" : {
-		"host" : "192.168.2.10",
+		"host" : "localhost",
 		"port" : 8086,
 		"name" : "enedis"
 	},

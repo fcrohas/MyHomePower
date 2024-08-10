@@ -229,7 +229,7 @@ export default {
     return {
       pageNumber: 0,
       size: 5,
-      date: '2019-12-01',
+      date: '2024-07-01',
       menu: false,
       today: new Date(),
       startTime: '00:00:00',

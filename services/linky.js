@@ -20,9 +20,13 @@ class Linky {
    }
 
    initialize() {
-     this.parser = this.port.pipe(new Readline({ delimiter: '\n' }));
-     this.parser.on('data', (data) => this.onData(data));
-   }
+	if (!this.parser && this.port && Readline) { // Check if port and Readline are defined
+	  this.parser = this.port.pipe(new Readline({ delimiter: '\n' }));
+	  this.parser.on('data', (data) => this.onData(data));
+	} else {
+	  console.error("Dependencies not loaded yet");
+	}
+  }
 
    onData(data) {
      const params = data.replace(/\r/g,'').split(' ');
