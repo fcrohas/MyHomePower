@@ -36,9 +36,13 @@
         <input 
           v-model="newTag.label" 
           type="text" 
+          list="label-suggestions"
           placeholder="e.g., Fridge, Water Heater, Standby"
           @keyup.enter="submitTag"
         />
+        <datalist id="label-suggestions">
+          <option v-for="label in existingLabels" :key="label" :value="label" />
+        </datalist>
       </div>
       
       <div class="form-actions">
@@ -117,6 +121,12 @@ const filteredTags = computed(() => {
   return props.tags
     .filter(tag => tag.date === props.currentDate)
     .sort((a, b) => a.startTime.localeCompare(b.startTime))
+})
+
+// Get unique labels from all tags for autocomplete
+const existingLabels = computed(() => {
+  const labels = new Set(props.tags.map(tag => tag.label))
+  return Array.from(labels).sort()
 })
 
 // Statistics
