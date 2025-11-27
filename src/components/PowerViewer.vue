@@ -55,6 +55,7 @@
           :data="chartData"
           :tags="tags"
           :selectedRange="selectedRange"
+          :currentDate="selectedDate"
           @range-selected="onRangeSelected"
         />
       </div>
@@ -76,7 +77,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { format, parseISO, addDays, subDays } from 'date-fns'
 import PowerChart from './PowerChart.vue'
 import TagManager from './TagManager.vue'
@@ -214,12 +215,7 @@ const clearSelection = () => {
   selectedRange.value = null
 }
 
-// Auto-connect if credentials exist
-onMounted(() => {
-  if (haUrl.value && haToken.value && entityId.value) {
-    connect()
-  }
-})
+// Note: Removed auto-connect behavior - user must explicitly click "Connect" button
 </script>
 
 <style scoped>

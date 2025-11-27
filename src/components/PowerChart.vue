@@ -27,6 +27,10 @@ const props = defineProps({
   selectedRange: {
     type: Object,
     default: null
+  },
+  currentDate: {
+    type: String,
+    required: true
   }
 })
 
@@ -128,8 +132,9 @@ const createChart = () => {
 const getAnnotations = () => {
   const annotations = {}
   
-  // Add tag annotations
-  props.tags.forEach((tag, index) => {
+  // Add tag annotations - only for current date
+  const tagsForToday = props.tags.filter(tag => tag.date === props.currentDate)
+  tagsForToday.forEach((tag, index) => {
     const startTime = new Date(tag.date + 'T' + tag.startTime)
     const endTime = new Date(tag.date + 'T' + tag.endTime)
     
