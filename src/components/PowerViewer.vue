@@ -49,26 +49,56 @@
         <button @click="nextDay" class="nav-btn">Next Day →</button>
       </div>
 
-      <!-- Chart -->
-      <div class="chart-container">
-        <PowerChart 
-          :data="chartData"
-          :tags="tags"
-          :selectedRange="selectedRange"
-          :currentDate="selectedDate"
-          @range-selected="onRangeSelected"
-        />
+      <!-- Main Content: Chart Left, Tags Right -->
+      <div class="main-content">
+        <!-- Chart -->
+        <div class="chart-section">
+          <PowerChart 
+            :data="chartData"
+            :tags="tags"
+            :selectedRange="selectedRange"
+            :currentDate="selectedDate"
+            @range-selected="onRangeSelected"
+          />
+        </div>
+
+        <!-- Tag Manager -->
+        <div class="tags-section">
+          <TagManager 
+            :tags="tags"
+            :selectedRange="selectedRange"
+            :currentDate="selectedDate"
+            @add-tag="addTag"
+            @delete-tag="deleteTag"
+            @clear-selection="clearSelection"
+          />
+        </div>
       </div>
 
-      <!-- Tag Manager -->
-      <TagManager 
-        :tags="tags"
-        :selectedRange="selectedRange"
-        :currentDate="selectedDate"
-        @add-tag="addTag"
-        @delete-tag="deleteTag"
-        @clear-selection="clearSelection"
-      />
+      <!-- Statistics Section Below -->
+      <div class="statistics-section" v-if="filteredTags.length > 0">
+        <h2>Statistics</h2>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <span class="stat-label">Total Tagged Periods:</span>
+            <span class="stat-value">{{ filteredTags.length }}</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Unique Labels:</span>
+            <span class="stat-value">{{ uniqueLabels.size }}</span>
+          </div>
+        </div>
+        
+        <div class="label-breakdown">
+          <h3>Breakdown by Label:</h3>
+          <div class="label-stats-grid">
+            <div v-for="[label, count] in labelCounts" :key="label" class="label-stat">
+              <span class="label-name">{{ label }}</span>
+              <span class="count-badge">{{ count }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- Loading/Status -->
       <div v-if="loading" class="loading">Loading data...</div>
@@ -105,6 +135,26 @@ const chartData = computed(() => {
     x: new Date(item.timestamp),
     y: item.value
   }))
+})
+
+// Filtered tags for current date
+const filteredTags = computed(() => {
+  return tags.value
+    .filter(tag => tag.date === selectedDate.value)
+    .sort((a, b) => a.startTime.localeCompare(b.startTime))
+})
+
+// Statistics
+const uniqueLabels = computed(() => {
+  return new Set(filteredTags.value.map(t => t.label))
+})
+
+const labelCounts = computed(() => {
+  const counts = new Map()
+  filteredTags.value.forEach(tag => {
+    counts.set(tag.label, (counts.get(tag.label) || 0) + 1)
+  })
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])
 })
 
 // Load tags from localStorage
@@ -220,10 +270,7 @@ const clearSelection = () => {
 
 <style scoped>
 .power-viewer {
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-  overflow: hidden;
+  min-height: calc(100vh - 80px);
 }
 
 .config-panel {
@@ -233,8 +280,9 @@ const clearSelection = () => {
 }
 
 .config-panel h2 {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
   color: #2c3e50;
+  font-size: 1.25rem;
 }
 
 .form-group {
@@ -294,13 +342,14 @@ button:disabled {
 
 .viewer-container {
   padding: 1.5rem;
+  max-width: 100%;
 }
 
 .date-navigation {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
   gap: 1rem;
 }
 
@@ -329,11 +378,115 @@ button:disabled {
   color: #2c3e50;
 }
 
-.chart-container {
-  margin-bottom: 2rem;
+.main-content {
+  display: grid;
+  grid-template-columns: 1fr 400px;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.chart-section {
   background: #fafafa;
-  padding: 1rem;
+  padding: 0.75rem;
   border-radius: 8px;
+  min-height: 400px;
+}
+
+.tags-section {
+  background: white;
+  border-radius: 8px;
+  overflow-y: auto;
+  max-height: 600px;
+}
+
+.statistics-section {
+  margin-top: 1.5rem;
+  padding: 1.5rem;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.statistics-section h2 {
+  margin-bottom: 1rem;
+  color: #2c3e50;
+  font-size: 1.25rem;
+}
+
+.statistics-section h3 {
+  margin-bottom: 0.75rem;
+  color: #2c3e50;
+  font-size: 1.1rem;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border-left: 4px solid #42b983;
+}
+
+.stat-label {
+  font-size: 0.9rem;
+  color: #666;
+  font-weight: 500;
+}
+
+.stat-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #42b983;
+}
+
+.label-breakdown {
+  margin-top: 1rem;
+}
+
+.label-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.label-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  background: #f8f9fa;
+  border-radius: 6px;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.label-stat:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.label-name {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.count-badge {
+  background: #42b983;
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  min-width: 30px;
+  text-align: center;
 }
 
 .loading {
@@ -343,6 +496,16 @@ button:disabled {
   font-style: italic;
 }
 
+@media (max-width: 1200px) {
+  .main-content {
+    grid-template-columns: 1fr;
+  }
+  
+  .tags-section {
+    max-height: none;
+  }
+}
+
 @media (max-width: 768px) {
   .date-navigation {
     flex-direction: column;
@@ -350,6 +513,10 @@ button:disabled {
   
   .nav-btn {
     width: 100%;
+  }
+  
+  .viewer-container {
+    padding: 1rem;
   }
 }
 </style>

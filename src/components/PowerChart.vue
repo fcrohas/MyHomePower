@@ -134,16 +134,18 @@ const getAnnotations = () => {
   
   // Add tag annotations - only for current date
   const tagsForToday = props.tags.filter(tag => tag.date === props.currentDate)
-  tagsForToday.forEach((tag, index) => {
+  tagsForToday.forEach((tag) => {
     const startTime = new Date(tag.date + 'T' + tag.startTime)
     const endTime = new Date(tag.date + 'T' + tag.endTime)
+    
+    const colors = getTagColorByLabel(tag.label)
     
     annotations[`tag-${tag.id}`] = {
       type: 'box',
       xMin: startTime,
       xMax: endTime,
-      backgroundColor: getTagColor(index),
-      borderColor: getTagColor(index, true),
+      backgroundColor: colors.background,
+      borderColor: colors.border,
       borderWidth: 2,
       label: {
         content: tag.label,
@@ -169,26 +171,43 @@ const getAnnotations = () => {
   return annotations
 }
 
-const getTagColor = (index, border = false) => {
+// Label to color mapping (persistent across chart updates)
+const labelColorMap = new Map()
+let colorIndex = 0
+
+const getTagColorByLabel = (label) => {
+  // Return existing color if already assigned
+  if (labelColorMap.has(label)) {
+    return labelColorMap.get(label)
+  }
+  
+  // Available colors
   const colors = [
-    'rgba(255, 99, 132, 0.2)',
-    'rgba(54, 162, 235, 0.2)',
-    'rgba(255, 206, 86, 0.2)',
-    'rgba(75, 192, 192, 0.2)',
-    'rgba(153, 102, 255, 0.2)',
-    'rgba(255, 159, 64, 0.2)'
+    { background: 'rgba(255, 99, 132, 0.2)', border: 'rgba(255, 99, 132, 0.8)' },
+    { background: 'rgba(54, 162, 235, 0.2)', border: 'rgba(54, 162, 235, 0.8)' },
+    { background: 'rgba(255, 206, 86, 0.2)', border: 'rgba(255, 206, 86, 0.8)' },
+    { background: 'rgba(75, 192, 192, 0.2)', border: 'rgba(75, 192, 192, 0.8)' },
+    { background: 'rgba(153, 102, 255, 0.2)', border: 'rgba(153, 102, 255, 0.8)' },
+    { background: 'rgba(255, 159, 64, 0.2)', border: 'rgba(255, 159, 64, 0.8)' },
+    { background: 'rgba(255, 99, 255, 0.2)', border: 'rgba(255, 99, 255, 0.8)' },
+    { background: 'rgba(99, 255, 132, 0.2)', border: 'rgba(99, 255, 132, 0.8)' },
+    { background: 'rgba(255, 192, 159, 0.2)', border: 'rgba(255, 192, 159, 0.8)' },
+    { background: 'rgba(132, 99, 255, 0.2)', border: 'rgba(132, 99, 255, 0.8)' },
+    { background: 'rgba(64, 224, 208, 0.2)', border: 'rgba(64, 224, 208, 0.8)' },
+    { background: 'rgba(255, 140, 0, 0.2)', border: 'rgba(255, 140, 0, 0.8)' },
+    { background: 'rgba(186, 85, 211, 0.2)', border: 'rgba(186, 85, 211, 0.8)' },
+    { background: 'rgba(34, 139, 34, 0.2)', border: 'rgba(34, 139, 34, 0.8)' },
+    { background: 'rgba(220, 20, 60, 0.2)', border: 'rgba(220, 20, 60, 0.8)' }
   ]
   
-  const borderColors = [
-    'rgba(255, 99, 132, 0.8)',
-    'rgba(54, 162, 235, 0.8)',
-    'rgba(255, 206, 86, 0.8)',
-    'rgba(75, 192, 192, 0.8)',
-    'rgba(153, 102, 255, 0.8)',
-    'rgba(255, 159, 64, 0.8)'
-  ]
+  // Assign next color in rotation
+  const color = colors[colorIndex % colors.length]
+  colorIndex++
   
-  return border ? borderColors[index % borderColors.length] : colors[index % colors.length]
+  // Store mapping
+  labelColorMap.set(label, color)
+  
+  return color
 }
 
 const handleMouseDown = (event) => {

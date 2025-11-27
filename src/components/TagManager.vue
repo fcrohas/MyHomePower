@@ -1,8 +1,10 @@
 <template>
   <div class="tag-manager">
-    <h2>Power Tags</h2>
+    <div class="sticky-header">
+      <h2>Power Tags</h2>
+    </div>
     
-    <!-- Add Tag Form -->
+    <div class="scrollable-content">
     <div class="add-tag-form" v-if="selectedRange">
       <h3>Add New Tag</h3>
       <p class="selected-range">
@@ -79,28 +81,6 @@
         </div>
       </div>
     </div>
-    
-    <!-- Statistics -->
-    <div class="statistics" v-if="filteredTags.length > 0">
-      <h3>Statistics</h3>
-      <div class="stats-grid">
-        <div class="stat-item">
-          <span class="stat-label">Total Tagged Periods:</span>
-          <span class="stat-value">{{ filteredTags.length }}</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Unique Labels:</span>
-          <span class="stat-value">{{ uniqueLabels.size }}</span>
-        </div>
-      </div>
-      
-      <div class="label-breakdown">
-        <h4>By Label:</h4>
-        <div v-for="[label, count] in labelCounts" :key="label" class="label-stat">
-          <span>{{ label }}</span>
-          <span class="count-badge">{{ count }}</span>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -206,19 +186,42 @@ const deleteTagHandler = (tagId) => {
 .tag-manager {
   background: white;
   border-radius: 8px;
-  padding: 1.5rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.sticky-header {
+  position: sticky;
+  top: 0;
+  background: white;
+  padding: 1rem;
+  border-bottom: 2px solid #f0f0f0;
+  z-index: 10;
+  border-radius: 8px 8px 0 0;
+}
+
+.sticky-header h2 {
+  margin: 0;
+}
+
+.scrollable-content {
+  padding: 1rem;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .tag-manager h2 {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
   color: #2c3e50;
-  font-size: 1.5rem;
+  font-size: 1.25rem;
 }
 
 .tag-manager h3 {
-  margin-bottom: 1rem;
+  margin-bottom: 0.75rem;
   color: #2c3e50;
-  font-size: 1.2rem;
+  font-size: 1.1rem;
 }
 
 .tag-manager h4 {
@@ -229,9 +232,9 @@ const deleteTagHandler = (tagId) => {
 
 .add-tag-form {
   background: #f8f9fa;
-  padding: 1.5rem;
+  padding: 1rem;
   border-radius: 8px;
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
   border: 2px solid #42b983;
 }
 
@@ -252,7 +255,7 @@ const deleteTagHandler = (tagId) => {
 }
 
 .form-group {
-  margin-bottom: 1rem;
+  margin-bottom: 0.75rem;
 }
 
 .form-group label {
@@ -293,7 +296,7 @@ const deleteTagHandler = (tagId) => {
 }
 
 .tags-list {
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
 }
 
 .empty-state {
@@ -371,49 +374,6 @@ const deleteTagHandler = (tagId) => {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 1rem;
   margin-bottom: 1.5rem;
-}
-
-.stat-item {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 1rem;
-  background: white;
-  border-radius: 6px;
-}
-
-.stat-label {
-  font-size: 0.9rem;
-  color: #666;
-}
-
-.stat-value {
-  font-size: 1.5rem;
-  font-weight: 600;
-  color: #42b983;
-}
-
-.label-breakdown {
-  margin-top: 1rem;
-}
-
-.label-stat {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.75rem;
-  background: white;
-  border-radius: 4px;
-  margin-bottom: 0.5rem;
-}
-
-.count-badge {
-  background: #42b983;
-  color: white;
-  padding: 0.25rem 0.75rem;
-  border-radius: 12px;
-  font-size: 0.9rem;
-  font-weight: 600;
 }
 
 @media (max-width: 768px) {
