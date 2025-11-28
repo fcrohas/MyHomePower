@@ -228,15 +228,43 @@ app.post('/api/ha/disconnect', (req, res) => {
 })
 
 // Export day data with merged overlapping tags and save to data folder
-app.post('/api/export/day', (req, res) => {
-  const { date, tags } = req.body
+app.post('/api/export/day', async (req, res) => {
+  const { date, tags, sessionId } = req.body
 
   if (!date || !tags) {
     return res.status(400).json({ error: 'Missing date or tags' })
   }
 
+  if (!sessionId || !haConnections.has(sessionId)) {
+    return res.status(401).json({ error: 'Not connected to Home Assistant' })
+  }
+
   try {
     console.log(`Exporting data for ${date} with ${tags.length} tags`)
+
+    const { url, token, entityId } = haConnections.get(sessionId)
+
+    // Fetch power history for the entire day
+    const startDate = new Date(`${date}T00:00:00`)
+    const endDate = new Date(`${date}T23:59:59`)
+    
+    const historyUrl = `${url}/api/history/period/${startDate.toISOString()}?filter_entity_id=${entityId}&end_time=${endDate.toISOString()}`
+    
+    const historyResponse = await fetch(historyUrl, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    })
+
+    if (!historyResponse.ok) {
+      throw new Error(`History fetch failed: ${historyResponse.statusText}`)
+    }
+
+    const historyData = await historyResponse.json()
+    const powerData = historyData[0] || []
+
+    console.log(`Fetched ${powerData.length} power data points`)
 
     // Filter tags for the specific date
     const dateTags = tags.filter(tag => tag.date === date)
@@ -298,12 +326,24 @@ app.post('/api/export/day', (req, res) => {
     }
 
     // Convert back to time format and create final output
-    const exportData = {
+    const tagsData = {
       date: date,
       entries: segments.map(segment => ({
         startTime: minutesToTime(segment.startMin),
         endTime: minutesToTime(segment.endMin),
         label: segment.labels.join(', ')
+      }))
+    }
+
+    // Prepare power data for the whole day
+    const powerExportData = {
+      date: date,
+      entityId: haConnections.get(sessionId).entityId,
+      dataPoints: powerData.length,
+      data: powerData.map(point => ({
+        timestamp: point.last_changed || point.last_updated,
+        power: parseFloat(point.state),
+        unit: point.attributes?.unit_of_measurement || 'W'
       }))
     }
 
@@ -313,18 +353,26 @@ app.post('/api/export/day', (req, res) => {
       fs.mkdirSync(dataDir, { recursive: true })
     }
 
-    // Save to file
-    const filename = `power-tags-${date}.json`
-    const filepath = path.join(dataDir, filename)
-    fs.writeFileSync(filepath, JSON.stringify(exportData, null, 2), 'utf8')
+    // Save tags file
+    const tagsFilename = `power-tags-${date}.json`
+    const tagsFilepath = path.join(dataDir, tagsFilename)
+    fs.writeFileSync(tagsFilepath, JSON.stringify(tagsData, null, 2), 'utf8')
     
-    console.log(`✅ Saved ${exportData.entries.length} segments to ${filepath}`)
+    // Save power data file
+    const powerFilename = `power-data-${date}.json`
+    const powerFilepath = path.join(dataDir, powerFilename)
+    fs.writeFileSync(powerFilepath, JSON.stringify(powerExportData, null, 2), 'utf8')
+    
+    console.log(`✅ Saved ${tagsData.entries.length} segments to ${tagsFilepath}`)
+    console.log(`✅ Saved ${powerExportData.dataPoints} power data points to ${powerFilepath}`)
     
     res.json({ 
       success: true, 
-      message: `Data saved to ${filename}`,
-      filename: filename,
-      entries: exportData.entries.length
+      message: `Data saved to ${tagsFilename} and ${powerFilename}`,
+      tagsFile: tagsFilename,
+      powerFile: powerFilename,
+      entries: tagsData.entries.length,
+      dataPoints: powerExportData.dataPoints
     })
   } catch (error) {
     console.error('Export error:', error)

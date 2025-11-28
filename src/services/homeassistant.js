@@ -168,12 +168,18 @@ export async function disconnect() {
  * @param {Array} tags - All tags
  */
 export async function exportDay(date, tags) {
+  const sessionId = localStorage.getItem('haSessionId')
+  
+  if (!sessionId) {
+    throw new Error('Not connected to Home Assistant. Please connect first.')
+  }
+  
   const response = await fetch(`${API_URL}/api/export/day`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ date, tags })
+    body: JSON.stringify({ date, tags, sessionId })
   })
 
   if (!response.ok) {
