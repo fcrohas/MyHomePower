@@ -161,3 +161,26 @@ export async function disconnect() {
     sessionId = null
   }
 }
+
+/**
+ * Export day data with merged overlapping tags to server data folder
+ * @param {string} date - Date to export (YYYY-MM-DD)
+ * @param {Array} tags - All tags
+ */
+export async function exportDay(date, tags) {
+  const response = await fetch(`${API_URL}/api/export/day`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ date, tags })
+  })
+
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.error || 'Failed to export data')
+  }
+
+  const result = await response.json()
+  return result
+}

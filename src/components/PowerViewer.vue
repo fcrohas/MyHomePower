@@ -47,6 +47,9 @@
           <span>{{ formatDate(selectedDate) }}</span>
         </div>
         <button @click="nextDay" class="nav-btn">Next Day →</button>
+        <button @click="exportCurrentDay" class="btn-export" :disabled="filteredTags.length === 0" title="Export current day to JSON">
+          💾 Save Day
+        </button>
       </div>
 
       <!-- Main Content: Chart Left, Tags Right -->
@@ -111,7 +114,7 @@ import { ref, computed } from 'vue'
 import { format, parseISO, addDays, subDays } from 'date-fns'
 import PowerChart from './PowerChart.vue'
 import TagManager from './TagManager.vue'
-import { connectToHA, fetchHistory } from '../services/homeassistant'
+import { connectToHA, fetchHistory, exportDay } from '../services/homeassistant'
 
 // Connection state
 const connected = ref(false)
@@ -265,6 +268,37 @@ const clearSelection = () => {
   selectedRange.value = null
 }
 
+// Get color for a label (matches chart colors)
+const getLabelColor = (label) => {
+  if (chartRef.value && chartRef.value.getColorForLabel) {
+    const colors = chartRef.value.getColorForLabel(label)
+    return colors.border
+  }
+  return '#42b983' // fallback color
+}
+
+// Export current day data
+const exportCurrentDay = async () => {
+  if (filteredTags.value.length === 0) {
+    return
+  }
+  
+  loading.value = true
+  error.value = ''
+  
+  try {
+    const result = await exportDay(selectedDate.value, tags.value)
+    console.log(`✅ Saved ${result.entries} entries to ${result.filename}`)
+    alert(`Success! Saved ${result.entries} entries to ${result.filename}`)
+  } catch (err) {
+    error.value = 'Failed to export: ' + err.message
+    console.error('Export error:', err)
+    alert('Failed to export: ' + err.message)
+  } finally {
+    loading.value = false
+  }
+}
+
 // Note: Removed auto-connect behavior - user must explicitly click "Connect" button
 </script>
 
@@ -351,6 +385,23 @@ button:disabled {
   align-items: center;
   margin-bottom: 1rem;
   gap: 1rem;
+}
+
+.btn-export {
+  width: auto;
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  background: #28a745;
+  margin-left: auto;
+}
+
+.btn-export:hover:not(:disabled) {
+  background: #218838;
+}
+
+.btn-export:disabled {
+  background: #ccc;
+  cursor: not-allowed;
 }
 
 .nav-btn {

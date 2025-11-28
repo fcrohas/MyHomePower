@@ -1,6 +1,13 @@
 import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
+import { dirname } from 'path'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 dotenv.config()
 
@@ -218,6 +225,114 @@ app.post('/api/ha/disconnect', (req, res) => {
   }
   
   res.json({ success: true, message: 'Disconnected' })
+})
+
+// Export day data with merged overlapping tags and save to data folder
+app.post('/api/export/day', (req, res) => {
+  const { date, tags } = req.body
+
+  if (!date || !tags) {
+    return res.status(400).json({ error: 'Missing date or tags' })
+  }
+
+  try {
+    console.log(`Exporting data for ${date} with ${tags.length} tags`)
+
+    // Filter tags for the specific date
+    const dateTags = tags.filter(tag => tag.date === date)
+
+    if (dateTags.length === 0) {
+      return res.status(400).json({ error: 'No tags found for this date' })
+    }
+
+    // Sort tags by start time
+    const sortedTags = dateTags.sort((a, b) => a.startTime.localeCompare(b.startTime))
+
+    // Convert time strings to minutes for easier comparison
+    const timeToMinutes = (timeStr) => {
+      const [hours, minutes] = timeStr.split(':').map(Number)
+      return hours * 60 + minutes
+    }
+
+    const minutesToTime = (minutes) => {
+      const hours = Math.floor(minutes / 60).toString().padStart(2, '0')
+      const mins = (minutes % 60).toString().padStart(2, '0')
+      return `${hours}:${mins}`
+    }
+
+    // Convert tags to intervals with labels
+    const intervals = sortedTags.map(tag => ({
+      start: timeToMinutes(tag.startTime),
+      end: timeToMinutes(tag.endTime),
+      label: tag.label
+    }))
+
+    // Collect all unique time points (start and end times)
+    const timePoints = new Set()
+    intervals.forEach(interval => {
+      timePoints.add(interval.start)
+      timePoints.add(interval.end)
+    })
+
+    // Sort time points
+    const sortedTimePoints = Array.from(timePoints).sort((a, b) => a - b)
+
+    // For each segment between consecutive time points, find which labels are active
+    const segments = []
+    for (let i = 0; i < sortedTimePoints.length - 1; i++) {
+      const segmentStart = sortedTimePoints[i]
+      const segmentEnd = sortedTimePoints[i + 1]
+
+      // Find all labels that cover this segment
+      const activeLabels = intervals
+        .filter(interval => interval.start <= segmentStart && interval.end >= segmentEnd)
+        .map(interval => interval.label)
+
+      if (activeLabels.length > 0) {
+        segments.push({
+          startMin: segmentStart,
+          endMin: segmentEnd,
+          labels: activeLabels
+        })
+      }
+    }
+
+    // Convert back to time format and create final output
+    const exportData = {
+      date: date,
+      entries: segments.map(segment => ({
+        startTime: minutesToTime(segment.startMin),
+        endTime: minutesToTime(segment.endMin),
+        label: segment.labels.join(', ')
+      }))
+    }
+
+    // Create data directory if it doesn't exist
+    const dataDir = path.join(__dirname, '..', 'data')
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true })
+    }
+
+    // Save to file
+    const filename = `power-tags-${date}.json`
+    const filepath = path.join(dataDir, filename)
+    fs.writeFileSync(filepath, JSON.stringify(exportData, null, 2), 'utf8')
+    
+    console.log(`✅ Saved ${exportData.entries.length} segments to ${filepath}`)
+    
+    res.json({ 
+      success: true, 
+      message: `Data saved to ${filename}`,
+      filename: filename,
+      entries: exportData.entries.length
+    })
+  } catch (error) {
+    console.error('Export error:', error)
+    res.status(500).json({ 
+      error: 'Failed to export data',
+      message: error.message 
+    })
+  }
 })
 
 // Start server
