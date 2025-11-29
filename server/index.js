@@ -5,6 +5,7 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
+import * as tf from '@tensorflow/tfjs-node'
 import { PowerTagPredictor } from './ml/model.js'
 import { loadAllData, prepareTrainingData, createTensors, preparePredictionInput } from './ml/dataPreprocessing.js'
 
@@ -586,6 +587,206 @@ app.post('/api/ml/predict', async (req, res) => {
     console.error('ML Prediction error:', error)
     res.status(500).json({
       error: 'Failed to make prediction',
+      message: error.message
+    })
+  }
+})
+
+// Predict tags for entire day using sliding windows
+app.post('/api/ml/predict-day', async (req, res) => {
+  try {
+    const { date, powerData } = req.body
+
+    if (!date || !powerData || !Array.isArray(powerData)) {
+      return res.status(400).json({ error: 'Missing date or powerData array' })
+    }
+
+    // Load model if not in memory
+    if (!mlModel) {
+      const modelDir = path.join(__dirname, 'ml', 'saved_model')
+      const metadataPath = path.join(modelDir, 'metadata.json')
+
+      if (!fs.existsSync(metadataPath)) {
+        return res.status(404).json({ error: 'No trained model found. Please train the model first.' })
+      }
+
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+      mlTags = metadata.uniqueTags
+      mlStats = metadata.stats
+
+      mlModel = new PowerTagPredictor()
+      mlModel.setTags(mlTags)
+      await mlModel.load(modelDir)
+
+      console.log('✅ ML model loaded from disk')
+    }
+
+    console.log(`Making predictions for ${date} with ${powerData.length} data points`)
+
+    // Debug: Check data format
+    if (powerData.length > 0) {
+      console.log('Sample data point:', JSON.stringify(powerData[0], null, 2))
+    }
+
+    // Create 10-minute windows with sliding approach
+    const windowSizeMs = 10 * 60 * 1000 // 10 minutes
+    const lookbackWindows = 5 // Need 5 previous windows for prediction
+    const predictions = []
+
+    // Sort power data by timestamp - handle different property names
+    const sortedData = powerData.map(d => ({
+      timestamp: d.timestamp || d.last_changed || d.last_updated,
+      value: d.value || d.state || d.power
+    })).filter(d => d.timestamp && d.value).sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    )
+
+    if (sortedData.length === 0) {
+      return res.status(400).json({ error: 'No valid power data provided' })
+    }
+
+    console.log(`First data point: ${sortedData[0].timestamp}`)
+    console.log(`Last data point: ${sortedData[sortedData.length - 1].timestamp}`)
+
+    const startTime = new Date(sortedData[0].timestamp).getTime()
+    const endTime = new Date(sortedData[sortedData.length - 1].timestamp).getTime()
+    
+    const timeRangeHours = (endTime - startTime) / (1000 * 60 * 60)
+    console.log(`Time range: ${timeRangeHours.toFixed(2)} hours`)
+
+    // Create sliding windows starting from the point where we have enough history
+    const firstPredictionTime = startTime + (lookbackWindows * windowSizeMs)
+    console.log(`First prediction time: ${new Date(firstPredictionTime).toISOString()}`)
+    console.log(`End time: ${new Date(endTime).toISOString()}`)
+    
+    let currentTime = firstPredictionTime
+    let totalWindows = 0
+    let skippedWindows = 0
+    
+    while (currentTime <= endTime) {
+      totalWindows++
+      const windowEnd = currentTime + windowSizeMs
+      
+      // Get data for the last 50 minutes (5 windows of 10 minutes each)
+      const lookbackStart = currentTime - (lookbackWindows * windowSizeMs)
+      const historyData = sortedData.filter(d => {
+        const t = new Date(d.timestamp).getTime()
+        return t >= lookbackStart && t < currentTime
+      })
+
+      if (historyData.length >= 10) { // Need at least some data points
+        try {
+          // Transform data to match expected format (with 'power' property)
+          const formattedHistoryData = historyData.map(d => ({
+            timestamp: d.timestamp,
+            power: parseFloat(d.value)
+          }))
+          
+          console.log(`Window ${new Date(currentTime).toISOString()}: ${formattedHistoryData.length} data points`)
+          
+          // Create a simplified input preparation that doesn't rely on createWindows
+          // We need 5 windows x 60 points = 300 points total
+          const targetPoints = 300
+          const powers = formattedHistoryData.map(d => d.power)
+          
+          // Resample to exact number of points needed
+          const resampled = []
+          for (let i = 0; i < targetPoints; i++) {
+            const position = (i / (targetPoints - 1)) * (powers.length - 1)
+            const lowerIndex = Math.floor(position)
+            const upperIndex = Math.min(Math.ceil(position), powers.length - 1)
+            const fraction = position - lowerIndex
+            const value = powers[lowerIndex] * (1 - fraction) + powers[upperIndex] * fraction
+            resampled.push(value)
+          }
+          
+          // Normalize
+          const minPower = mlStats.minPower
+          const maxPower = mlStats.maxPower
+          const range = maxPower - minPower
+          const normalized = resampled.map(p => range > 0 ? (p - minPower) / range : 0)
+          
+          // Create tensor [1, 300, 1]
+          const inputTensor = tf.tensor([normalized]).expandDims(-1)
+
+          // Make prediction
+          const predictionTensor = mlModel.predict(inputTensor)
+          const predictionArray = await predictionTensor.array()
+
+          // Get tag probabilities
+          const tagProbabilities = mlTags.map((tag, idx) => ({
+            tag,
+            probability: predictionArray[0][idx]
+          }))
+
+          // Sort by probability
+          tagProbabilities.sort((a, b) => b.probability - a.probability)
+
+          // Get predicted tag
+          const predictedTag = tagProbabilities[0].tag
+          const confidence = tagProbabilities[0].probability
+
+          // Calculate average power and energy for this window
+          const windowData = sortedData.filter(d => {
+            const t = new Date(d.timestamp).getTime()
+            return t >= currentTime && t < windowEnd
+          })
+
+          let avgPower = 0
+          let energy = 0
+          if (windowData.length > 0) {
+            const powers = windowData.map(d => parseFloat(d.value))
+            avgPower = powers.reduce((sum, p) => sum + p, 0) / powers.length
+            // Energy = Power * Time (in Wh)
+            // 10 minutes = 1/6 hour
+            energy = avgPower * (10 / 60)
+          }
+
+          // Format time strings
+          const startDate = new Date(currentTime)
+          const endDate = new Date(windowEnd)
+          const startTimeStr = startDate.toTimeString().substring(0, 5)
+          const endTimeStr = endDate.toTimeString().substring(0, 5)
+
+          predictions.push({
+            startTime: startTimeStr,
+            endTime: endTimeStr,
+            tag: predictedTag,
+            confidence: confidence,
+            avgPower: avgPower,
+            energy: energy,
+            allProbabilities: tagProbabilities
+          })
+
+          // Clean up
+          inputTensor.dispose()
+          predictionTensor.dispose()
+
+        } catch (err) {
+          console.warn(`Prediction failed for window ${new Date(currentTime).toISOString()}:`, err.message)
+        }
+      } else {
+        skippedWindows++
+      }
+
+      // Move to next window
+      currentTime += windowSizeMs
+    }
+
+    console.log(`✅ Generated ${predictions.length} predictions for ${date}`)
+    console.log(`Total windows processed: ${totalWindows}, Skipped (insufficient data): ${skippedWindows}`)
+
+    res.json({
+      date,
+      predictions,
+      totalWindows: predictions.length,
+      tags: mlTags
+    })
+
+  } catch (error) {
+    console.error('Day prediction error:', error)
+    res.status(500).json({
+      error: 'Failed to make predictions',
       message: error.message
     })
   }

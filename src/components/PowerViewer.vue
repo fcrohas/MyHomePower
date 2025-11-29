@@ -49,6 +49,12 @@
         >
           🧠 ML Trainer
         </button>
+        <button 
+          :class="['tab-btn', { active: activeTab === 'detector' }]"
+          @click="activeTab = 'detector'"
+        >
+          🔍 Power Detector
+        </button>
       </div>
 
       <!-- Tagging Tab -->
@@ -127,6 +133,11 @@
         <MLTrainer :powerData="powerData" />
       </div>
 
+      <!-- Power Detector Tab -->
+      <div v-show="activeTab === 'detector'" class="tab-content">
+        <PowerDetector :sessionId="sessionId" />
+      </div>
+
       <!-- Loading/Status -->
       <div v-if="loading" class="loading">Loading data...</div>
     </div>
@@ -139,10 +150,12 @@ import { format, parseISO, addDays, subDays } from 'date-fns'
 import PowerChart from './PowerChart.vue'
 import TagManager from './TagManager.vue'
 import MLTrainer from './MLTrainer.vue'
+import PowerDetector from './PowerDetector.vue'
 import { connectToHA, fetchHistory, exportDay } from '../services/homeassistant'
 
 // Connection state
 const connected = ref(false)
+const sessionId = ref(localStorage.getItem('haSessionId') || '')
 const haUrl = ref(localStorage.getItem('haUrl') || '')
 const haToken = ref(localStorage.getItem('haToken') || '')
 const entityId = ref(localStorage.getItem('entityId') || 'sensor.power_consumption')
@@ -209,6 +222,9 @@ const connect = async () => {
   try {
     await connectToHA(haUrl.value, haToken.value, entityId.value)
     connected.value = true
+    
+    // Get sessionId from localStorage (set by connectToHA)
+    sessionId.value = localStorage.getItem('haSessionId')
     
     // Save credentials
     localStorage.setItem('haUrl', haUrl.value)
