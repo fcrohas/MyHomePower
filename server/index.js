@@ -776,11 +776,41 @@ app.post('/api/ml/predict-day', async (req, res) => {
     console.log(`✅ Generated ${predictions.length} predictions for ${date}`)
     console.log(`Total windows processed: ${totalWindows}, Skipped (insufficient data): ${skippedWindows}`)
 
+    // Calculate standby baseline power from windows tagged as "standby" only
+    const standbyWindows = predictions.filter(p => p.tag === 'standby')
+    let standbyBaseline = 0
+    if (standbyWindows.length > 0) {
+      const totalStandbyPower = standbyWindows.reduce((sum, p) => sum + p.avgPower, 0)
+      standbyBaseline = totalStandbyPower / standbyWindows.length
+      console.log(`📊 Calculated standby baseline: ${standbyBaseline.toFixed(2)} W from ${standbyWindows.length} windows`)
+    }
+
+    // Adjust energy calculations: subtract standby from appliance consumption but keep total power
+    const adjustedPredictions = predictions.map(p => {
+      if (p.tag !== 'standby' && standbyBaseline > 0) {
+        // Keep original avgPower (total consumption)
+        // But calculate appliance-only energy by subtracting standby
+        const appliancePower = Math.max(0, p.avgPower - standbyBaseline)
+        const applianceEnergy = appliancePower * (10 / 60) // Energy from appliance only
+        const standbyEnergy = standbyBaseline * (10 / 60) // Standby energy for this window
+        return {
+          ...p,
+          energy: applianceEnergy, // This is the appliance consumption only
+          standbyEnergy: standbyEnergy, // Standby consumption for this window
+          totalEnergy: p.energy, // Original total energy
+          appliancePower: appliancePower,
+          standbyBaseline: standbyBaseline
+        }
+      }
+      return p
+    })
+
     res.json({
       date,
-      predictions,
-      totalWindows: predictions.length,
-      tags: mlTags
+      predictions: adjustedPredictions,
+      totalWindows: adjustedPredictions.length,
+      tags: mlTags,
+      standbyBaseline: standbyBaseline
     })
 
   } catch (error) {

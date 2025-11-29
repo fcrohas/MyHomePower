@@ -71,8 +71,16 @@
         <h3>📊 Summary Statistics</h3>
         <div class="stats-summary">
           <div class="stat-item">
-            <span class="label">Total Energy:</span>
+            <span class="label">Appliance Energy:</span>
             <span class="value">{{ totalEnergy.toFixed(2) }} Wh</span>
+          </div>
+          <div class="stat-item">
+            <span class="label">Standby Energy:</span>
+            <span class="value">{{ totalStandbyEnergy.toFixed(2) }} Wh</span>
+          </div>
+          <div class="stat-item">
+            <span class="label">Total Energy:</span>
+            <span class="value">{{ totalCombinedEnergy.toFixed(2) }} Wh</span>
           </div>
           <div class="stat-item">
             <span class="label">Active Periods:</span>
@@ -105,7 +113,8 @@
                 <th>Predicted Tag</th>
                 <th>Confidence</th>
                 <th>Avg Power</th>
-                <th>Energy (Wh)</th>
+                <th>Appliance Energy (Wh)</th>
+                <th>Standby Energy (Wh)</th>
               </tr>
             </thead>
             <tbody>
@@ -124,6 +133,7 @@
                 </td>
                 <td>{{ pred.avgPower ? pred.avgPower.toFixed(0) : '0' }} W</td>
                 <td>{{ pred.energy ? pred.energy.toFixed(2) : '0.00' }} Wh</td>
+                <td>{{ pred.standbyEnergy ? pred.standbyEnergy.toFixed(2) : '0.00' }} Wh</td>
               </tr>
             </tbody>
           </table>
@@ -176,7 +186,18 @@ const uniqueTags = computed(() => {
 })
 
 const totalEnergy = computed(() => {
+  // Sum of appliance energy only (standby is separate)
   return predictions.value.reduce((sum, p) => sum + p.energy, 0)
+})
+
+const totalStandbyEnergy = computed(() => {
+  // Sum of standby energy across all windows
+  return predictions.value.reduce((sum, p) => sum + (p.standbyEnergy || 0), 0)
+})
+
+const totalCombinedEnergy = computed(() => {
+  // Total energy including standby
+  return totalEnergy.value + totalStandbyEnergy.value
 })
 
 const avgPower = computed(() => {
@@ -188,11 +209,19 @@ const avgPower = computed(() => {
 const energyByTag = computed(() => {
   const byTag = {}
   predictions.value.forEach(p => {
-    if (!byTag[p.tag]) {
-      byTag[p.tag] = 0
+    // Rename "standby" tag to "other" in the pie chart
+    const tagName = p.tag === 'standby' ? 'other' : p.tag
+    if (!byTag[tagName]) {
+      byTag[tagName] = 0
     }
-    byTag[p.tag] += p.energy
+    byTag[tagName] += p.energy
   })
+  
+  // Add baseline as a separate category for the total standby consumption across all periods
+  if (totalStandbyEnergy.value > 0) {
+    byTag['baseline'] = totalStandbyEnergy.value
+  }
+  
   return byTag
 })
 
@@ -485,7 +514,17 @@ const renderPieChart = () => {
 
   const tags = Object.keys(energyByTag.value)
   const energies = tags.map(tag => energyByTag.value[tag])
-  const colors = tags.map(tag => colorMap.value[tag])
+  const colors = tags.map(tag => {
+    // Use blue color for "other" tag
+    if (tag === 'other') {
+      return '#3498DB'
+    }
+    // Use light gray for "baseline" tag
+    if (tag === 'baseline') {
+      return '#95A5A6'
+    }
+    return colorMap.value[tag]
+  })
 
   pieChart.value = new Chart(ctx, {
     type: 'pie',
