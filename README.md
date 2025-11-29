@@ -10,6 +10,19 @@ A Vue.js application for tagging and analyzing power consumption history from Ho
 - 🔌 **Home Assistant Integration**: Connect directly to your Home Assistant instance via REST API
 - 💾 **Local Storage**: Tags are saved locally in your browser
 - 📈 **Statistics**: View tag statistics and breakdown by label
+- 🧠 **ML Tag Predictor**: Deep learning model to predict power usage tags based on patterns (NEW!)
+
+## What's New: ML Tag Predictor
+
+The app now includes a machine learning feature that learns from your tagged data to predict power usage patterns! 
+
+### Key Capabilities:
+- **Train a CNN1D + LSTM model** on your historical tagged data
+- **Real-time training progress** with learning curves (loss and accuracy)
+- **Make predictions** for the next 10 minutes based on the last 50 minutes of power data
+- **View confidence scores** for all possible tags
+
+See [ML_FEATURE.md](ML_FEATURE.md) for detailed documentation.
 
 ## Setup
 
@@ -98,6 +111,16 @@ The backend acts as a proxy between your browser and Home Assistant, avoiding CO
   - Peak usage times
   - Standby consumption periods
 
+### Using the ML Tag Predictor
+
+1. **Save Training Data**: After tagging several days, click "💾 Save Day" to export data to the `data/` folder
+2. **Train Model**: Switch to the "🧠 ML Trainer" tab and click "Start Training"
+3. **Watch Progress**: Monitor the real-time learning curves showing loss and accuracy
+4. **Make Predictions**: Once trained, click "Predict Tag" to test the model
+5. **View Results**: See the predicted tag with confidence scores
+
+For detailed ML documentation, see [ML_FEATURE.md](ML_FEATURE.md).
+
 ## Technical Details
 
 ### Technologies Used
@@ -107,6 +130,7 @@ The backend acts as a proxy between your browser and Home Assistant, avoiding CO
 - **Chart.js**: Interactive charting library
 - **date-fns**: Date manipulation and formatting
 - **Express**: Node.js backend server
+- **TensorFlow.js**: Machine learning library for tag prediction
 - **Home Assistant REST API**: For fetching power consumption history (via backend proxy)
 
 ### Data Storage
@@ -125,16 +149,24 @@ The backend acts as a proxy between your browser and Home Assistant, avoiding CO
 ```
 src/
 ├── components/
-│   ├── PowerViewer.vue    # Main container component
+│   ├── PowerViewer.vue    # Main container component with tabs
 │   ├── PowerChart.vue     # Chart.js integration with selection
-│   └── TagManager.vue     # Tag CRUD and statistics
+│   ├── TagManager.vue     # Tag CRUD and statistics
+│   └── MLTrainer.vue      # ML training interface (NEW)
 ├── services/
 │   └── homeassistant.js   # Backend API client
 ├── App.vue                # Root component
 └── main.js                # Application entry point
 
 server/
-└── index.js               # Express backend proxy server
+├── index.js               # Express backend proxy server + ML APIs
+└── ml/
+    ├── model.js           # CNN1D + LSTM model architecture (NEW)
+    └── dataPreprocessing.js # Training data preparation (NEW)
+
+data/                      # Saved training data (NEW)
+├── power-data-*.json      # Power consumption data
+└── power-tags-*.json      # Tagged segments
 ```
 
 ## Building for Production

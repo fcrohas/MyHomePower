@@ -35,8 +35,26 @@
 
     <!-- Main Viewer -->
     <div v-else class="viewer-container">
-      <!-- Date Navigation -->
-      <div class="date-navigation">
+      <!-- Tab Navigation -->
+      <div class="tab-navigation">
+        <button 
+          :class="['tab-btn', { active: activeTab === 'tagging' }]"
+          @click="activeTab = 'tagging'"
+        >
+          📊 Power Tagging
+        </button>
+        <button 
+          :class="['tab-btn', { active: activeTab === 'ml' }]"
+          @click="activeTab = 'ml'"
+        >
+          🧠 ML Trainer
+        </button>
+      </div>
+
+      <!-- Tagging Tab -->
+      <div v-show="activeTab === 'tagging'" class="tab-content">
+        <!-- Date Navigation -->
+        <div class="date-navigation">
         <button @click="previousDay" class="nav-btn">← Previous Day</button>
         <div class="current-date">
           <input 
@@ -102,6 +120,12 @@
           </div>
         </div>
       </div>
+      </div>
+
+      <!-- ML Trainer Tab -->
+      <div v-show="activeTab === 'ml'" class="tab-content">
+        <MLTrainer :powerData="powerData" />
+      </div>
 
       <!-- Loading/Status -->
       <div v-if="loading" class="loading">Loading data...</div>
@@ -114,6 +138,7 @@ import { ref, computed } from 'vue'
 import { format, parseISO, addDays, subDays } from 'date-fns'
 import PowerChart from './PowerChart.vue'
 import TagManager from './TagManager.vue'
+import MLTrainer from './MLTrainer.vue'
 import { connectToHA, fetchHistory, exportDay } from '../services/homeassistant'
 
 // Connection state
@@ -123,6 +148,9 @@ const haToken = ref(localStorage.getItem('haToken') || '')
 const entityId = ref(localStorage.getItem('entityId') || 'sensor.power_consumption')
 const error = ref('')
 const loading = ref(false)
+
+// Tab management
+const activeTab = ref('tagging')
 
 // Date management
 const selectedDate = ref(format(new Date(), 'yyyy-MM-dd'))
@@ -377,6 +405,52 @@ button:disabled {
 .viewer-container {
   padding: 1.5rem;
   max-width: 100%;
+}
+
+.tab-navigation {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+.tab-btn {
+  width: auto;
+  padding: 0.75rem 1.5rem;
+  background: transparent;
+  color: #666;
+  border: none;
+  border-bottom: 3px solid transparent;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.tab-btn:hover {
+  color: #42b983;
+  background: rgba(66, 185, 131, 0.05);
+}
+
+.tab-btn.active {
+  color: #42b983;
+  border-bottom-color: #42b983;
+  background: rgba(66, 185, 131, 0.1);
+}
+
+.tab-content {
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .date-navigation {

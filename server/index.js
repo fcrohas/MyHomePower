@@ -5,6 +5,8 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
+import { PowerTagPredictor } from './ml/model.js'
+import { loadAllData, prepareTrainingData, createTensors, preparePredictionInput } from './ml/dataPreprocessing.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -16,10 +18,18 @@ const PORT = process.env.PORT || 3001
 
 // Middleware
 app.use(cors())
-app.use(express.json())
+app.use(express.json({ limit: '50mb' })) // Increase limit for large power data arrays
+app.use(express.urlencoded({ limit: '50mb', extended: true }))
 
 // Store HA connection info (in production, use a proper session management)
 let haConnections = new Map()
+
+// ML model instance and training state
+let mlModel = null
+let mlStats = null
+let mlTags = []
+let trainingInProgress = false
+let trainingHistory = []
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -379,6 +389,204 @@ app.post('/api/export/day', async (req, res) => {
     res.status(500).json({ 
       error: 'Failed to export data',
       message: error.message 
+    })
+  }
+})
+
+// ===== ML ENDPOINTS =====
+
+// Train ML model
+app.post('/api/ml/train', async (req, res) => {
+  if (trainingInProgress) {
+    return res.status(409).json({ error: 'Training already in progress' })
+  }
+
+  try {
+    trainingInProgress = true
+    trainingHistory = []
+
+    console.log('🧠 Starting ML model training...')
+
+    // Load all data from data folder
+    const dataDir = path.join(__dirname, '..', 'data')
+    const datasets = loadAllData(dataDir)
+
+    if (datasets.length === 0) {
+      throw new Error('No training data found in data folder')
+    }
+
+    // Prepare training data
+    const { xData, yData, uniqueTags, stats } = prepareTrainingData(datasets)
+    mlTags = uniqueTags
+    mlStats = stats
+
+    // Create tensors
+    const { xTrain, yTrain, xVal, yVal } = createTensors(xData, yData, 0.8)
+
+    // Build model
+    mlModel = new PowerTagPredictor()
+    mlModel.setTags(uniqueTags)
+    mlModel.buildModel(60, 5, uniqueTags.length)
+
+    // Set up SSE for streaming training progress
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive'
+    })
+
+    // Training callback
+    const onEpochEnd = async (epoch, logs) => {
+      const progress = {
+        epoch: epoch + 1,
+        loss: logs.loss,
+        accuracy: logs.acc,
+        valLoss: logs.val_loss,
+        valAccuracy: logs.val_acc
+      }
+      trainingHistory.push(progress)
+
+      // Send progress via SSE
+      res.write(`data: ${JSON.stringify(progress)}\n\n`)
+    }
+
+    // Train the model
+    const epochs = 5
+    const batchSize = 32
+
+    await mlModel.train(xTrain, yTrain, xVal, yVal, epochs, batchSize, onEpochEnd)
+
+    // Save the model
+    const modelDir = path.join(__dirname, 'ml', 'saved_model')
+    if (!fs.existsSync(modelDir)) {
+      fs.mkdirSync(modelDir, { recursive: true })
+    }
+    await mlModel.save(modelDir)
+
+    // Save metadata
+    const metadata = {
+      uniqueTags: mlTags,
+      stats: mlStats,
+      trainedAt: new Date().toISOString(),
+      trainingHistory: trainingHistory
+    }
+    fs.writeFileSync(
+      path.join(modelDir, 'metadata.json'),
+      JSON.stringify(metadata, null, 2)
+    )
+
+    // Clean up tensors
+    xTrain.dispose()
+    yTrain.dispose()
+    xVal.dispose()
+    yVal.dispose()
+
+    // Send completion message
+    res.write(`data: ${JSON.stringify({ done: true, message: 'Training completed successfully' })}\n\n`)
+    res.end()
+
+    trainingInProgress = false
+    console.log('✅ ML model training completed')
+
+  } catch (error) {
+    console.error('ML Training error:', error)
+    trainingInProgress = false
+
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: 'Failed to train model',
+        message: error.message
+      })
+    } else {
+      res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`)
+      res.end()
+    }
+  }
+})
+
+// Get training status
+app.get('/api/ml/status', (req, res) => {
+  res.json({
+    trainingInProgress,
+    modelLoaded: mlModel !== null,
+    tags: mlTags,
+    historyLength: trainingHistory.length
+  })
+})
+
+// Get training history
+app.get('/api/ml/history', (req, res) => {
+  res.json({
+    history: trainingHistory,
+    tags: mlTags,
+    stats: mlStats
+  })
+})
+
+// Predict tags for next 10 minutes
+app.post('/api/ml/predict', async (req, res) => {
+  try {
+    const { powerData } = req.body
+
+    if (!powerData || !Array.isArray(powerData)) {
+      return res.status(400).json({ error: 'Missing or invalid powerData array' })
+    }
+
+    // Load model if not in memory
+    if (!mlModel) {
+      const modelDir = path.join(__dirname, 'ml', 'saved_model')
+      const metadataPath = path.join(modelDir, 'metadata.json')
+
+      if (!fs.existsSync(metadataPath)) {
+        return res.status(404).json({ error: 'No trained model found. Please train the model first.' })
+      }
+
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+      mlTags = metadata.uniqueTags
+      mlStats = metadata.stats
+
+      mlModel = new PowerTagPredictor()
+      mlModel.setTags(mlTags)
+      await mlModel.load(modelDir)
+
+      console.log('✅ ML model loaded from disk')
+    }
+
+    // Prepare input (last 50 minutes of data)
+    const inputTensor = preparePredictionInput(powerData, mlStats)
+
+    // Make prediction
+    const predictions = mlModel.predict(inputTensor)
+    const predictionArray = await predictions.array()
+
+    // Get probabilities for each tag
+    const tagProbabilities = mlTags.map((tag, idx) => ({
+      tag,
+      probability: predictionArray[0][idx]
+    }))
+
+    // Sort by probability
+    tagProbabilities.sort((a, b) => b.probability - a.probability)
+
+    // Get predicted tag (highest probability)
+    const predictedTag = tagProbabilities[0].tag
+    const confidence = tagProbabilities[0].probability
+
+    // Clean up
+    inputTensor.dispose()
+    predictions.dispose()
+
+    res.json({
+      predictedTag,
+      confidence,
+      allProbabilities: tagProbabilities
+    })
+
+  } catch (error) {
+    console.error('ML Prediction error:', error)
+    res.status(500).json({
+      error: 'Failed to make prediction',
+      message: error.message
     })
   }
 })
