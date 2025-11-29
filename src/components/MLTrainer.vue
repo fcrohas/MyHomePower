@@ -755,13 +755,23 @@ export default {
       this.error = null
 
       try {
+        // Transform data to match server expectations: time/value -> timestamp/power
+        const transformedData = this.selectedDataPreview.map(d => ({
+          timestamp: d.time || d.timestamp,
+          power: d.value !== undefined ? d.value : d.power
+        }))
+
+        console.log('Sending prediction data:', transformedData.length, 'points')
+        console.log('First data point:', transformedData[0])
+        console.log('Last data point:', transformedData[transformedData.length - 1])
+
         const response = await fetch('http://localhost:3001/api/ml/predict', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            powerData: this.selectedDataPreview
+            powerData: transformedData
           })
         })
 
@@ -770,7 +780,9 @@ export default {
         }
 
         this.predictionResult = await response.json()
+        console.log('Prediction result:', this.predictionResult)
       } catch (err) {
+        console.error('Prediction error:', err)
         this.error = 'Prediction failed: ' + err.message
       } finally {
         this.predicting = false

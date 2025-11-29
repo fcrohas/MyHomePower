@@ -451,7 +451,7 @@ app.post('/api/ml/train', async (req, res) => {
     }
 
     // Train the model
-    const epochs = 5
+    const epochs = 20
     const batchSize = 32
 
     await mlModel.train(xTrain, yTrain, xVal, yVal, epochs, batchSize, onEpochEnd)
