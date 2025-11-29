@@ -56,7 +56,7 @@ function timeToMinutes(timeStr) {
  * Get tag for a specific timestamp
  * @param {string} timestamp - ISO timestamp
  * @param {Array} tagEntries - Array of tag entries
- * @returns {string} Tag label or 'none'
+ * @returns {string} Tag label or 'standby'
  */
 function getTagForTimestamp(timestamp, tagEntries) {
   const date = new Date(timestamp)
@@ -71,7 +71,7 @@ function getTagForTimestamp(timestamp, tagEntries) {
     }
   }
 
-  return 'none'
+  return 'standby'
 }
 
 /**

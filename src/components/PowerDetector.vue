@@ -92,37 +92,42 @@
 
     <!-- Detailed Predictions Table -->
     <div v-if="predictions.length > 0 && !loading" class="predictions-table">
-      <h3>🎯 Detailed Predictions</h3>
-      <div class="table-wrapper">
-        <table>
-          <thead>
-            <tr>
-              <th>Time Range</th>
-              <th>Predicted Tag</th>
-              <th>Confidence</th>
-              <th>Avg Power</th>
-              <th>Energy (Wh)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(pred, idx) in predictions" :key="idx">
-              <td>{{ pred.startTime }} - {{ pred.endTime }}</td>
-              <td>
-                <span class="tag-badge" :style="{ backgroundColor: pred.color }">
-                  {{ pred.tag }}
-                </span>
-              </td>
-              <td>
-                <div class="confidence-bar">
-                  <div class="confidence-fill" :style="{ width: (pred.confidence * 100) + '%' }"></div>
-                  <span class="confidence-text">{{ pred.confidence ? (pred.confidence * 100).toFixed(1) : '0.0' }}%</span>
-                </div>
-              </td>
-              <td>{{ pred.avgPower ? pred.avgPower.toFixed(0) : '0' }} W</td>
-              <td>{{ pred.energy ? pred.energy.toFixed(2) : '0.00' }} Wh</td>
-            </tr>
-          </tbody>
-        </table>
+      <div class="accordion-header" @click="showDetailedPredictions = !showDetailedPredictions">
+        <h3>🎯 Detailed Predictions</h3>
+        <span class="accordion-icon">{{ showDetailedPredictions ? '▼' : '▶' }}</span>
+      </div>
+      <div v-show="showDetailedPredictions" class="accordion-content">
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Time Range</th>
+                <th>Predicted Tag</th>
+                <th>Confidence</th>
+                <th>Avg Power</th>
+                <th>Energy (Wh)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(pred, idx) in predictions" :key="idx">
+                <td>{{ pred.startTime }} - {{ pred.endTime }}</td>
+                <td>
+                  <span class="tag-badge" :style="{ backgroundColor: pred.color }">
+                    {{ pred.tag }}
+                  </span>
+                </td>
+                <td>
+                  <div class="confidence-bar">
+                    <div class="confidence-fill" :style="{ width: (pred.confidence * 100) + '%' }"></div>
+                    <span class="confidence-text">{{ pred.confidence ? (pred.confidence * 100).toFixed(1) : '0.0' }}%</span>
+                  </div>
+                </td>
+                <td>{{ pred.avgPower ? pred.avgPower.toFixed(0) : '0' }} W</td>
+                <td>{{ pred.energy ? pred.energy.toFixed(2) : '0.00' }} Wh</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
@@ -153,6 +158,7 @@ const powerChart = ref(null)
 const pieChart = ref(null)
 const powerChartCanvas = ref(null)
 const pieChartCanvas = ref(null)
+const showDetailedPredictions = ref(false)
 
 // Color palette for tags
 const tagColors = [
@@ -758,8 +764,32 @@ onUnmounted(() => {
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 
+.accordion-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  padding: 0.5rem 0;
+  transition: opacity 0.2s;
+}
+
+.accordion-header:hover {
+  opacity: 0.7;
+}
+
+.accordion-icon {
+  font-size: 1rem;
+  color: #666;
+  transition: transform 0.2s;
+}
+
+.accordion-content {
+  margin-top: 1rem;
+}
+
 .predictions-table h3 {
-  margin-bottom: 1rem;
+  margin-bottom: 0;
   color: #2c3e50;
   font-size: 1.25rem;
 }
