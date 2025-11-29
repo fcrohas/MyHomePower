@@ -71,16 +71,89 @@
 
     <!-- Prediction Section -->
     <div class="prediction-section">
-      <h3>Test Prediction</h3>
-      <p>Use the last 50 minutes of loaded data to predict the next tag</p>
+      <h3>🔮 Test Prediction</h3>
+      <p>Select a time range to use for prediction (needs 50 minutes of data)</p>
       
-      <button 
-        @click="testPrediction" 
-        :disabled="!modelTrained || predicting"
-        class="btn btn-primary"
-      >
-        {{ predicting ? 'Predicting...' : 'Predict Tag' }}
-      </button>
+      <div class="prediction-controls">
+        <div class="date-range-selector">
+          <label>Start Time:</label>
+          <input 
+            type="datetime-local" 
+            v-model="predictionStartTime"
+            :max="predictionMaxTime"
+            class="datetime-input"
+          />
+          <label>End Time:</label>
+          <input 
+            type="datetime-local" 
+            v-model="predictionEndTime"
+            :max="predictionMaxTime"
+            class="datetime-input"
+          />
+          <div class="range-info">
+            <span v-if="selectedDataPoints > 0">
+              📊 {{ selectedDataPoints }} data points ({{ selectedMinutes.toFixed(1) }} minutes)
+              <span :class="selectedMinutes >= 50 ? 'text-success' : 'text-warning'">
+                {{ selectedMinutes >= 50 ? '✓ Sufficient' : '⚠ Need 50+ minutes' }}
+              </span>
+            </span>
+            <span v-else class="text-warning">
+              ⚠️ No data in selected range
+            </span>
+          </div>
+        </div>
+        
+        <button 
+          @click="testPrediction" 
+          :disabled="!modelTrained || predicting || selectedMinutes < 50 || selectedDataPoints === 0"
+          class="btn btn-primary"
+          :title="getButtonDisabledReason()"
+        >
+          {{ predicting ? 'Predicting...' : 'Predict Tag' }}
+        </button>
+        
+        <!-- Debug info -->
+        <div v-if="!modelTrained || selectedMinutes < 50 || selectedDataPoints === 0" class="button-status">
+          <span v-if="!modelTrained" class="status-warning">⚠️ No trained model - Train the model first</span>
+          <span v-if="modelTrained && selectedDataPoints === 0" class="status-warning">⚠️ No data in selected range - Adjust date/time</span>
+          <span v-if="modelTrained && selectedDataPoints > 0 && selectedMinutes < 50" class="status-warning">
+            ⚠️ Need at least 50 minutes of data (currently {{ selectedMinutes.toFixed(1) }} minutes)
+          </span>
+        </div>
+      </div>
+
+      <!-- Show selected data preview -->
+      <div v-if="selectedDataPreview.length > 0" class="data-preview">
+        <h4>Selected Data Range</h4>
+        <div class="preview-stats">
+          <div class="stat-item">
+            <span class="stat-label">Time Range:</span>
+            <span class="stat-value">{{ formatTime(selectedDataPreview[0].time || selectedDataPreview[0].timestamp) }} → {{ formatTime(selectedDataPreview[selectedDataPreview.length - 1].time || selectedDataPreview[selectedDataPreview.length - 1].timestamp) }}</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Avg Power:</span>
+            <span class="stat-value">{{ averagePower.toFixed(2) }} W</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Min/Max:</span>
+            <span class="stat-value">{{ minPower.toFixed(0) }} / {{ maxPower.toFixed(0) }} W</span>
+          </div>
+          <div class="stat-item" v-if="actualTag">
+            <span class="stat-label">Actual Tag:</span>
+            <span class="stat-value tag-badge">{{ actualTag }}</span>
+          </div>
+        </div>
+        <div class="mini-chart">
+          <svg viewBox="0 0 400 80" class="power-line-chart">
+            <polyline
+              :points="powerLinePoints"
+              fill="none"
+              stroke="#4CAF50"
+              stroke-width="2"
+            />
+          </svg>
+        </div>
+      </div>
 
       <div v-if="predictionResult" class="prediction-result">
         <h4>Prediction Result</h4>
@@ -141,7 +214,10 @@ export default {
       error: null,
       chart: null,
       predicting: false,
-      predictionResult: null
+      predictionResult: null,
+      predictionStartTime: '',
+      predictionEndTime: '',
+      actualTag: null
     }
   },
   computed: {
@@ -157,10 +233,176 @@ export default {
       if (this.trainingInProgress) return 'status-training'
       if (this.modelTrained) return 'status-trained'
       return 'status-idle'
+    },
+    predictionMaxTime() {
+      if (this.powerData.length === 0) return ''
+      try {
+        const lastItem = this.powerData[this.powerData.length - 1]
+        if (!lastItem) return ''
+        
+        const timeValue = lastItem.time || lastItem.timestamp
+        if (!timeValue) return ''
+        
+        const date = new Date(timeValue)
+        if (isNaN(date.getTime())) return ''
+        
+        return date.toISOString().slice(0, 16)
+      } catch (err) {
+        return ''
+      }
+    },
+    selectedDataPreview() {
+      if (!this.predictionStartTime || !this.predictionEndTime) {
+        console.log('selectedDataPreview: No time range selected')
+        return []
+      }
+      
+      try {
+        const start = new Date(this.predictionStartTime).getTime()
+        const end = new Date(this.predictionEndTime).getTime()
+        
+        console.log('selectedDataPreview: Start time:', this.predictionStartTime, '→', start)
+        console.log('selectedDataPreview: End time:', this.predictionEndTime, '→', end)
+        console.log('selectedDataPreview: Total powerData items:', this.powerData.length)
+        
+        if (isNaN(start) || isNaN(end)) {
+          console.log('selectedDataPreview: Invalid date range')
+          return []
+        }
+        
+        // Sample first item to check format
+        if (this.powerData.length > 0) {
+          console.log('selectedDataPreview: Sample first item:', this.powerData[0])
+          console.log('selectedDataPreview: Sample last item:', this.powerData[this.powerData.length - 1])
+        }
+        
+        const filtered = this.powerData.filter(d => {
+          if (!d) return false
+          // Support both 'time' and 'timestamp' fields
+          const timeValue = d.time || d.timestamp
+          if (!timeValue) return false
+          
+          const time = new Date(timeValue).getTime()
+          return !isNaN(time) && time >= start && time <= end
+        })
+        
+        console.log('selectedDataPreview: Filtered items:', filtered.length)
+        if (filtered.length > 0) {
+          console.log('selectedDataPreview: First filtered item:', filtered[0])
+          console.log('selectedDataPreview: Last filtered item:', filtered[filtered.length - 1])
+        }
+        
+        return filtered
+      } catch (err) {
+        console.warn('Error filtering data preview:', err)
+        return []
+      }
+    },
+    selectedDataPoints() {
+      return this.selectedDataPreview.length
+    },
+    selectedMinutes() {
+      if (this.selectedDataPreview.length < 2) {
+        console.log('selectedMinutes: Not enough data points', this.selectedDataPreview.length)
+        return 0
+      }
+      try {
+        const firstItem = this.selectedDataPreview[0]
+        const lastItem = this.selectedDataPreview[this.selectedDataPreview.length - 1]
+        
+        const firstTime = firstItem?.time || firstItem?.timestamp
+        const lastTime = lastItem?.time || lastItem?.timestamp
+        
+        console.log('selectedMinutes: First item time:', firstTime)
+        console.log('selectedMinutes: Last item time:', lastTime)
+        
+        if (!firstItem || !lastItem || !firstTime || !lastTime) {
+          console.log('selectedMinutes: Missing time data')
+          return 0
+        }
+        
+        const start = new Date(firstTime).getTime()
+        const end = new Date(lastTime).getTime()
+        
+        console.log('selectedMinutes: Start timestamp:', start)
+        console.log('selectedMinutes: End timestamp:', end)
+        
+        if (isNaN(start) || isNaN(end)) {
+          console.log('selectedMinutes: Invalid timestamps')
+          return 0
+        }
+        
+        const minutes = (end - start) / 1000 / 60
+        console.log('selectedMinutes: Calculated minutes:', minutes)
+        return minutes
+      } catch (err) {
+        console.error('selectedMinutes: Error:', err)
+        return 0
+      }
+    },
+    averagePower() {
+      if (this.selectedDataPreview.length === 0) return 0
+      try {
+        const sum = this.selectedDataPreview.reduce((acc, d) => {
+          return acc + (d && typeof d.value === 'number' ? d.value : 0)
+        }, 0)
+        return sum / this.selectedDataPreview.length
+      } catch (err) {
+        return 0
+      }
+    },
+    minPower() {
+      if (this.selectedDataPreview.length === 0) return 0
+      try {
+        return Math.min(...this.selectedDataPreview.map(d => d && typeof d.value === 'number' ? d.value : Infinity))
+      } catch (err) {
+        return 0
+      }
+    },
+    maxPower() {
+      if (this.selectedDataPreview.length === 0) return 0
+      try {
+        return Math.max(...this.selectedDataPreview.map(d => d && typeof d.value === 'number' ? d.value : -Infinity))
+      } catch (err) {
+        return 0
+      }
+    },
+    powerLinePoints() {
+      if (this.selectedDataPreview.length === 0) return ''
+      
+      const data = this.selectedDataPreview
+      const min = this.minPower
+      const max = this.maxPower
+      const range = max - min || 1
+      
+      return data.map((d, i) => {
+        const x = (i / (data.length - 1)) * 400
+        const y = 70 - ((d.value - min) / range) * 60
+        return `${x},${y}`
+      }).join(' ')
     }
   },
   mounted() {
     this.checkModelStatus()
+    
+    // Initialize prediction date range to last 60 minutes
+    if (this.powerData.length > 0) {
+      try {
+        const lastItem = this.powerData[this.powerData.length - 1]
+        const timeValue = lastItem?.time || lastItem?.timestamp
+        if (lastItem && timeValue) {
+          const lastTime = new Date(timeValue)
+          if (!isNaN(lastTime.getTime())) {
+            const firstTime = new Date(lastTime.getTime() - 60 * 60 * 1000) // 60 minutes ago
+            
+            this.predictionEndTime = lastTime.toISOString().slice(0, 16)
+            this.predictionStartTime = firstTime.toISOString().slice(0, 16)
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to initialize prediction date range:', err)
+      }
+    }
   },
   beforeUnmount() {
     if (this.chart) {
@@ -168,7 +410,68 @@ export default {
       this.chart = null
     }
   },
+  watch: {
+    powerData: {
+      handler() {
+        // Update date range when power data changes
+        if (this.powerData.length > 0 && !this.predictionStartTime) {
+          try {
+            const lastItem = this.powerData[this.powerData.length - 1]
+            if (!lastItem) return
+            
+            const timeValue = lastItem.time || lastItem.timestamp
+            if (!timeValue) return
+            
+            const lastTime = new Date(timeValue)
+            if (isNaN(lastTime.getTime())) return // Invalid date
+            
+            const firstTime = new Date(lastTime.getTime() - 60 * 60 * 1000)
+            
+            this.predictionEndTime = lastTime.toISOString().slice(0, 16)
+            this.predictionStartTime = firstTime.toISOString().slice(0, 16)
+          } catch (err) {
+            console.warn('Failed to initialize prediction date range:', err)
+          }
+        }
+      },
+      immediate: true
+    },
+    selectedDataPreview: {
+      handler(newData) {
+        // Find the actual tag for the selected range's next period
+        if (newData.length > 0) {
+          const lastPoint = newData[newData.length - 1]
+          // Support both 'tag' in data or derived from value ranges
+          this.actualTag = lastPoint.tag || lastPoint.state || 'Unknown'
+        } else {
+          this.actualTag = null
+        }
+      },
+      immediate: true
+    }
+  },
   methods: {
+    formatTime(timestamp) {
+      try {
+        const date = new Date(timestamp)
+        if (isNaN(date.getTime())) return 'Invalid Date'
+        
+        return date.toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+      } catch (err) {
+        return 'Invalid Date'
+      }
+    },
+    getButtonDisabledReason() {
+      if (!this.modelTrained) return 'Train the model first'
+      if (this.selectedMinutes < 50) return 'Need at least 50 minutes of data'
+      if (this.predicting) return 'Prediction in progress'
+      return ''
+    },
     async checkModelStatus() {
       try {
         const response = await fetch('http://localhost:3001/api/ml/status')
@@ -438,8 +741,13 @@ export default {
     },
 
     async testPrediction() {
-      if (this.powerData.length === 0) {
-        this.error = 'No power data loaded. Please load data first.'
+      if (this.selectedDataPreview.length === 0) {
+        this.error = 'No data in selected range. Please adjust the date range.'
+        return
+      }
+
+      if (this.selectedMinutes < 50) {
+        this.error = 'Need at least 50 minutes of data for prediction. Please expand the date range.'
         return
       }
 
@@ -453,7 +761,7 @@ export default {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            powerData: this.powerData
+            powerData: this.selectedDataPreview
           })
         })
 
@@ -676,6 +984,138 @@ export default {
   color: #666;
   margin: 0 0 15px 0;
   font-size: 14px;
+}
+
+.prediction-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.date-range-selector {
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr;
+  gap: 10px;
+  align-items: center;
+  background: white;
+  padding: 15px;
+  border-radius: 8px;
+}
+
+.date-range-selector label {
+  font-weight: 600;
+  color: #555;
+  font-size: 14px;
+}
+
+.datetime-input {
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.range-info {
+  grid-column: 1 / -1;
+  margin-top: 10px;
+  padding: 10px;
+  background: #e8f5e9;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #333;
+}
+
+.text-success {
+  color: #2e7d32;
+  font-weight: 600;
+  margin-left: 10px;
+}
+
+.text-warning {
+  color: #f57c00;
+  font-weight: 600;
+  margin-left: 10px;
+}
+
+.button-status {
+  margin-top: 10px;
+  padding: 10px;
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.status-warning {
+  color: #856404;
+  display: block;
+}
+
+.data-preview {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  margin: 20px 0;
+  border: 1px solid #e0e0e0;
+}
+
+.data-preview h4 {
+  margin: 0 0 15px 0;
+  color: #2c3e50;
+  font-size: 16px;
+}
+
+.preview-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.stat-item {
+  background: #f9f9f9;
+  padding: 12px;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #666;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.stat-value {
+  font-size: 16px;
+  color: #2c3e50;
+  font-weight: 500;
+}
+
+.tag-badge {
+  display: inline-block;
+  background: #42b983;
+  color: white;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+.mini-chart {
+  background: #f9f9f9;
+  padding: 15px;
+  border-radius: 6px;
+  margin-top: 10px;
+}
+
+.power-line-chart {
+  width: 100%;
+  height: auto;
+  display: block;
 }
 
 .prediction-result {
