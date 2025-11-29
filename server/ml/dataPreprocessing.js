@@ -169,15 +169,18 @@ function normalize(values, min = null, max = null) {
  * @param {number} numWindows - Number of input windows (5 for 50 minutes)
  * @param {number} windowSizeMinutes - Size of each window
  * @param {number} pointsPerWindow - Number of points per window after resampling
+ * @param {number} stepSizeMinutes - Step size between samples for data augmentation (default 1 minute)
  * @returns {Object} {xData, yData, uniqueTags, stats}
  */
 export function prepareTrainingData(
   datasets,
   numWindows = 5,
   windowSizeMinutes = 10,
-  pointsPerWindow = 60
+  pointsPerWindow = 60,
+  stepSizeMinutes = 1
 ) {
   console.log('Preparing training data...')
+  console.log(`Using sliding window with step size: ${stepSizeMinutes} minutes`)
 
   const allSamples = []
   const allTags = new Set()
@@ -189,10 +192,12 @@ export function prepareTrainingData(
     const dataPoints = powerData.data
     allPowerValues.push(...dataPoints.map(dp => dp.power))
 
-    // Create windows
-    const windows = createWindows(dataPoints, windowSizeMinutes, windowSizeMinutes)
+    // Create windows with smaller step size for data augmentation
+    const windows = createWindows(dataPoints, windowSizeMinutes, stepSizeMinutes)
 
     // Create samples: each sample uses numWindows windows to predict next window's tag
+    // We need numWindows consecutive windows plus 1 target window
+    // Since windows now overlap, we create more training samples
     for (let i = 0; i <= windows.length - numWindows - 1; i++) {
       const inputWindows = windows.slice(i, i + numWindows)
       const targetWindow = windows[i + numWindows]
