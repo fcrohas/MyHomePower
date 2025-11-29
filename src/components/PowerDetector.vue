@@ -122,7 +122,7 @@
                 <td>{{ pred.startTime }} - {{ pred.endTime }}</td>
                 <td>
                   <span class="tag-badge" :style="{ backgroundColor: pred.color }">
-                    {{ pred.tag }}
+                    {{ pred.displayTag || pred.tag }}
                   </span>
                 </td>
                 <td>
@@ -209,7 +209,7 @@ const avgPower = computed(() => {
 const energyByTag = computed(() => {
   const byTag = {}
   predictions.value.forEach(p => {
-    // Rename "standby" tag to "other" in the pie chart
+    // Rename "standby" tag to "other" for display
     const tagName = p.tag === 'standby' ? 'other' : p.tag
     if (!byTag[tagName]) {
       byTag[tagName] = 0
@@ -243,8 +243,24 @@ const nextDay = () => {
 }
 
 const getTagColor = (tag) => {
+  // Assign special colors for specific tags to avoid conflicts
+  // Both "standby" and "other" should use the same color (light gray)
+  if (tag === 'standby' || tag === 'other') {
+    colorMap.value['standby'] = '#95A5A6' // Light gray
+    colorMap.value['other'] = '#95A5A6' // Same color for consistency
+    return '#95A5A6'
+  }
+  if (tag === 'baseline') {
+    colorMap.value[tag] = '#BDC3C7' // Lighter gray for baseline
+    return colorMap.value[tag]
+  }
+  
+  // For regular tags, assign from the color palette
   if (!colorMap.value[tag]) {
-    colorMap.value[tag] = tagColors[Object.keys(colorMap.value).length % tagColors.length]
+    // Count only non-special tags to avoid index conflicts
+    const specialTags = ['standby', 'other', 'baseline']
+    const regularTagCount = Object.keys(colorMap.value).filter(t => !specialTags.includes(t)).length
+    colorMap.value[tag] = tagColors[regularTagCount % tagColors.length]
   }
   return colorMap.value[tag]
 }
@@ -266,7 +282,10 @@ const loadAndPredict = async () => {
     }
 
     // Fetch power data for the selected date
+    // Need to start 50 minutes before midnight (23:10 previous day) to have enough 
+    // lookback data for predicting from 00:00 (5 windows x 10 minutes = 50 minutes)
     const startDate = new Date(`${selectedDate.value}T00:00:00`)
+    startDate.setMinutes(startDate.getMinutes() - 50) // Go back 50 minutes
     const endDate = new Date(`${selectedDate.value}T23:59:59`)
 
     const historyResponse = await fetch('http://localhost:3001/api/ha/history', {
@@ -344,6 +363,7 @@ const loadAndPredict = async () => {
     
     predictions.value = result.predictions.map((p) => ({
       ...p,
+      displayTag: p.tag === 'standby' ? 'other' : p.tag, // Display "other" instead of "standby"
       color: getTagColor(p.tag)
     }))
 
@@ -390,6 +410,10 @@ const renderPowerChart = () => {
   const ctx = powerChartCanvas.value.getContext('2d')
 
   // Prepare data points - handle Home Assistant timestamp format
+  // Filter to only show data from the selected day (not the previous day's lookback data)
+  const dayStartTime = new Date(`${selectedDate.value}T00:00:00`).getTime()
+  const dayEndTime = new Date(`${selectedDate.value}T23:59:59`).getTime()
+  
   const dataPoints = powerData.value.map(d => {
     const timestamp = d.timestamp || d.last_changed || d.last_updated
     const value = parseFloat(d.value || d.state)
@@ -397,7 +421,10 @@ const renderPowerChart = () => {
       x: new Date(timestamp),
       y: value
     }
-  }).filter(d => !isNaN(d.x.getTime()) && !isNaN(d.y))
+  }).filter(d => {
+    const time = d.x.getTime()
+    return !isNaN(time) && !isNaN(d.y) && time >= dayStartTime && time <= dayEndTime
+  })
   
   console.log('dataPoints sample:', dataPoints.slice(0, 3))
   
@@ -413,7 +440,7 @@ const renderPowerChart = () => {
       start: new Date(`${selectedDate.value}T${pred.startTime}`),
       end: new Date(`${selectedDate.value}T${pred.endTime}`),
       color: pred.color,
-      tag: pred.tag
+      tag: pred.displayTag || pred.tag // Use displayTag for showing "other"
     })
   })
 
@@ -514,17 +541,8 @@ const renderPieChart = () => {
 
   const tags = Object.keys(energyByTag.value)
   const energies = tags.map(tag => energyByTag.value[tag])
-  const colors = tags.map(tag => {
-    // Use blue color for "other" tag
-    if (tag === 'other') {
-      return '#3498DB'
-    }
-    // Use light gray for "baseline" tag
-    if (tag === 'baseline') {
-      return '#95A5A6'
-    }
-    return colorMap.value[tag]
-  })
+  // Use the same color mapping function as the power chart
+  const colors = tags.map(tag => getTagColor(tag))
 
   pieChart.value = new Chart(ctx, {
     type: 'pie',

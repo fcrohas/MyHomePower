@@ -593,6 +593,8 @@ app.post('/api/ml/predict', async (req, res) => {
 })
 
 // Predict tags for entire day using sliding windows
+// NOTE: To predict from midnight (00:00), powerData must include data starting from
+// 23:10 the previous day (50 minutes = 5 windows x 10 minutes lookback required)
 app.post('/api/ml/predict-day', async (req, res) => {
   try {
     const { date, powerData } = req.body
@@ -654,16 +656,30 @@ app.post('/api/ml/predict-day', async (req, res) => {
     const timeRangeHours = (endTime - startTime) / (1000 * 60 * 60)
     console.log(`Time range: ${timeRangeHours.toFixed(2)} hours`)
 
-    // Create sliding windows starting from the point where we have enough history
-    const firstPredictionTime = startTime + (lookbackWindows * windowSizeMs)
+    // Parse the target date and calculate day boundaries
+    const targetDate = new Date(date)
+    const dayStartTime = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate()).getTime()
+    const dayEndTime = dayStartTime + (24 * 60 * 60 * 1000) // End of day
+    
+    // First prediction should be at the start of the day (00:00)
+    // But we need 50 minutes of lookback data (5 windows * 10 minutes)
+    const firstPredictionTime = dayStartTime
     console.log(`First prediction time: ${new Date(firstPredictionTime).toISOString()}`)
-    console.log(`End time: ${new Date(endTime).toISOString()}`)
+    console.log(`Day end time: ${new Date(dayEndTime).toISOString()}`)
+    
+    // Verify we have enough lookback data
+    const requiredLookbackStart = dayStartTime - (lookbackWindows * windowSizeMs)
+    const availableDataStart = startTime
+    if (availableDataStart > requiredLookbackStart) {
+      console.warn(`⚠️  Warning: Data starts at ${new Date(availableDataStart).toISOString()} but we need data from ${new Date(requiredLookbackStart).toISOString()} (23:10 previous day) to predict from midnight`)
+    }
     
     let currentTime = firstPredictionTime
     let totalWindows = 0
     let skippedWindows = 0
     
-    while (currentTime <= endTime) {
+    // Generate predictions only for the target day
+    while (currentTime < dayEndTime) {
       totalWindows++
       const windowEnd = currentTime + windowSizeMs
       
