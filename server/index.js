@@ -32,6 +32,7 @@ let mlStats = null
 let mlTags = []
 let trainingInProgress = false
 let trainingHistory = []
+let trainingMetadata = null
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -479,8 +480,14 @@ app.post('/api/ml/train', async (req, res) => {
       uniqueTags: mlTags,
       stats: mlStats,
       trainedAt: new Date().toISOString(),
-      trainingHistory: trainingHistory
+      trainingHistory: trainingHistory,
+      datasetInfo: {
+        numberOfDays: datasets.length,
+        dates: datasets.map(d => d.date),
+        totalSamples: xData.length
+      }
     }
+    trainingMetadata = metadata
     fs.writeFileSync(
       path.join(modelDir, 'metadata.json'),
       JSON.stringify(metadata, null, 2)
@@ -521,7 +528,8 @@ app.get('/api/ml/status', (req, res) => {
     trainingInProgress,
     modelLoaded: mlModel !== null,
     tags: mlTags,
-    historyLength: trainingHistory.length
+    historyLength: trainingHistory.length,
+    metadata: trainingMetadata
   })
 })
 
@@ -959,6 +967,25 @@ app.post('/api/ml/predict-day', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Power Viewer API server running on http://localhost:${PORT}`)
   console.log(`📊 Ready to proxy Home Assistant requests`)
+  
+  // Load existing model metadata if available
+  const modelDir = path.join(__dirname, 'ml', 'saved_model')
+  const metadataPath = path.join(modelDir, 'metadata.json')
+  
+  if (fs.existsSync(metadataPath)) {
+    try {
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+      trainingMetadata = metadata
+      mlTags = metadata.uniqueTags || []
+      mlStats = metadata.stats || null
+      trainingHistory = metadata.trainingHistory || []
+      console.log(`✅ Loaded training metadata from ${metadata.trainedAt}`)
+      console.log(`   - ${metadata.datasetInfo?.numberOfDays || 'N/A'} days of training data`)
+      console.log(`   - ${mlTags.length} unique tags`)
+    } catch (err) {
+      console.warn('⚠️ Failed to load training metadata:', err.message)
+    }
+  }
 })
 
 // Graceful shutdown
