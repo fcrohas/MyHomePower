@@ -1,10 +1,5 @@
 <template>
   <div class="tag-manager">
-    <div class="sticky-header">
-      <h2>Power Tags</h2>
-    </div>
-    
-    <div class="scrollable-content">
     <div class="add-tag-form" v-if="selectedRange">
       <h3>Add New Tag</h3>
       <p class="selected-range">
@@ -55,6 +50,14 @@
       </div>
     </div>
     
+    <div class="sticky-header">
+      <h2 @click="toggleAccordion" class="accordion-header">
+        <span class="accordion-icon">{{ isExpanded ? '▼' : '▶' }}</span>
+        Power Tags
+      </h2>
+    </div>
+    
+    <div class="scrollable-content" v-show="isExpanded">
     <!-- Tags List -->
     <div class="tags-list">
       <h3>Tagged Periods ({{ filteredTags.length }})</h3>
@@ -109,6 +112,13 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['add-tag', 'delete-tag', 'clear-selection'])
+
+// Accordion state - collapsed by default
+const isExpanded = ref(false)
+
+const toggleAccordion = () => {
+  isExpanded.value = !isExpanded.value
+}
 
 const newTag = ref({
   startTime: '',
@@ -214,6 +224,24 @@ const deleteTagHandler = (tagId) => {
 
 .sticky-header h2 {
   margin: 0;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.accordion-header {
+  transition: color 0.2s;
+}
+
+.accordion-header:hover {
+  color: #42b983;
+}
+
+.accordion-icon {
+  font-size: 0.8em;
+  transition: transform 0.2s;
 }
 
 .scrollable-content {
