@@ -53,25 +53,28 @@ function timeToMinutes(timeStr) {
 }
 
 /**
- * Get tag for a specific timestamp
+ * Get tag for a specific timestamp (supports multi-label)
  * @param {string} timestamp - ISO timestamp
  * @param {Array} tagEntries - Array of tag entries
- * @returns {string} Tag label or 'standby'
+ * @returns {Array<string>} Array of tag labels (can be multiple), or ['standby'] if none
  */
-function getTagForTimestamp(timestamp, tagEntries) {
+function getTagsForTimestamp(timestamp, tagEntries) {
   const date = new Date(timestamp)
   const timeMinutes = date.getHours() * 60 + date.getMinutes()
 
+  const tags = []
   for (const entry of tagEntries) {
     const startMinutes = timeToMinutes(entry.startTime)
     const endMinutes = timeToMinutes(entry.endTime)
 
     if (timeMinutes >= startMinutes && timeMinutes <= endMinutes) {
-      return entry.label
+      // Split comma-separated tags and trim whitespace
+      const entryTags = entry.label.split(',').map(tag => tag.trim())
+      tags.push(...entryTags)
     }
   }
 
-  return 'standby'
+  return tags.length > 0 ? tags : ['standby']
 }
 
 /**
@@ -202,17 +205,18 @@ export function prepareTrainingData(
       const inputWindows = windows.slice(i, i + numWindows)
       const targetWindow = windows[i + numWindows]
 
-      // Get the tag for the target window (middle of the window)
+      // Get the tags for the target window (middle of the window) - supports multi-label
       const targetTimestamp = new Date(
         (targetWindow.start.getTime() + targetWindow.end.getTime()) / 2
       ).toISOString()
-      const tag = getTagForTimestamp(targetTimestamp, tagData.entries)
+      const tags = getTagsForTimestamp(targetTimestamp, tagData.entries)
 
-      allTags.add(tag)
+      // Add all tags to the set
+      tags.forEach(tag => allTags.add(tag))
 
       allSamples.push({
         inputWindows,
-        targetTag: tag
+        targetTags: tags
       })
     }
   }
@@ -246,11 +250,15 @@ export function prepareTrainingData(
     }
     xData.push(windowsData)
 
-    // One-hot encode target tag
-    const tagIndex = tagToIndex[sample.targetTag]
-    const oneHot = new Array(uniqueTags.length).fill(0)
-    oneHot[tagIndex] = 1
-    yData.push(oneHot)
+    // Multi-hot encode target tags (multi-label encoding)
+    const multiHot = new Array(uniqueTags.length).fill(0)
+    for (const tag of sample.targetTags) {
+      const tagIndex = tagToIndex[tag]
+      if (tagIndex !== undefined) {
+        multiHot[tagIndex] = 1
+      }
+    }
+    yData.push(multiHot)
   }
 
   console.log(`X shape: [${xData.length}, ${numWindows}, ${pointsPerWindow}]`)

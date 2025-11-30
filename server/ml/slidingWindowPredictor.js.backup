@@ -1,0 +1,330 @@
+import * as tf from '@tensorflow/tfjs-node'
+
+/**
+ * Sliding Window Predictor for improved time-series predictions
+ * Moves window across the day with configurable step size and aggregates results
+ */
+export class SlidingWindowPredictor {
+  /**
+   * @param {PowerTagPredictor} model - The trained model
+   * @param {number} windowSize - Size of the prediction window in minutes (e.g., 50)
+   * @param {number} stepSize - Step size in minutes for sliding (e.g., 5 for balance, 1 for precision)
+   * @param {number} timeStepsPerMinute - Number of data points per minute (default: 6 for 10-second intervals)
+   * @param {Object} stats - Normalization stats {minPower, maxPower}
+   */
+  constructor(model, windowSize = 50, stepSize = 5, timeStepsPerMinute = 6, stats = null) {
+    this.model = model
+    this.windowSize = windowSize
+    this.stepSize = stepSize
+    this.timeStepsPerMinute = timeStepsPerMinute
+    this.windowSizeInSteps = windowSize * timeStepsPerMinute
+    this.stepSizeInSteps = stepSize * timeStepsPerMinute
+    this.stats = stats
+  }
+
+  /**
+   * Predict with sliding window and aggregate results
+   * @param {Array<number>} powerData - Full day of power readings (array of watts)
+   * @param {number} threshold - Minimum probability threshold for tag detection
+   * @param {number} dataStartMinute - The minute of the day when the data starts (e.g., if data starts at 23:10 previous day, use -50)
+   * @returns {Array<Object>} Time-series predictions with confidence
+   */
+  async predictDay(powerData, threshold = 0.3, dataStartMinute = 0) {
+    console.log(`Starting sliding window prediction...`)
+    console.log(`Window: ${this.windowSize}min, Step: ${this.stepSize}min, Data points: ${powerData.length}`)
+    console.log(`Threshold: ${threshold}`)
+    console.log(`Data starts at minute: ${dataStartMinute}`)
+
+    const predictions = []
+    const numSteps = Math.floor((powerData.length - this.windowSizeInSteps) / this.stepSizeInSteps) + 1
+    let multiTagCount = 0
+
+    for (let i = 0; i < numSteps; i++) {
+      const startIdx = i * this.stepSizeInSteps
+      const endIdx = startIdx + this.windowSizeInSteps
+      
+      if (endIdx > powerData.length) break
+
+      const window = powerData.slice(startIdx, endIdx)
+      
+      // Normalize the window data using training stats
+      let normalizedWindow = window
+      if (this.stats && this.stats.minPower !== undefined && this.stats.maxPower !== undefined) {
+        const range = this.stats.maxPower - this.stats.minPower
+        normalizedWindow = window.map(p => range > 0 ? (p - this.stats.minPower) / range : 0)
+      }
+      
+      // Prepare tensor [1, windowSizeInSteps, 1]
+      const x = tf.tensor3d([normalizedWindow.map(v => [v])], [1, this.windowSizeInSteps, 1])
+      
+      // Predict
+      const pred = this.model.predict(x)
+      const predArray = await pred.array()
+      const predData = predArray[0] // Get first batch item
+      
+      // Get tags above threshold
+      const topTags = this.getTopTags(predData, threshold)
+      
+      if (topTags.length > 1) {
+        multiTagCount++
+      }
+      
+      // The prediction applies to the time AFTER the window
+      // Window covers startIdx to endIdx (50 minutes of lookback)
+      // Prediction is for the period starting at endIdx
+      // The model predicts what's happening in a 10-minute window AFTER the 50-minute lookback
+      // So the prediction represents: arrayMinute + 5 (middle of the 10-min target window)
+      const arrayMinute = Math.floor(endIdx / this.timeStepsPerMinute)
+      const targetWindowMiddle = arrayMinute + 5 // Predict 5 minutes ahead
+      const predictionMinute = dataStartMinute + targetWindowMiddle
+      
+      // DEBUG: Log first few predictions
+      if (i < 3) {
+        console.log(`Prediction ${i}: startIdx=${startIdx}, endIdx=${endIdx}, arrayMinute=${arrayMinute}, targetWindowMiddle=${targetWindowMiddle}, predictionMinute=${predictionMinute}`)
+      }
+      
+      predictions.push({
+        startIdx,
+        endIdx,
+        startMinute: predictionMinute,
+        predictions: predData,
+        tags: topTags
+      })
+
+      // Cleanup
+      x.dispose()
+      pred.dispose()
+
+      if ((i + 1) % 50 === 0) {
+        console.log(`Processed ${i + 1}/${numSteps} windows...`)
+      }
+    }
+
+    console.log(`✅ Completed ${predictions.length} predictions`)
+    console.log(`📊 Windows with multiple tags: ${multiTagCount} (${(multiTagCount/predictions.length*100).toFixed(1)}%)`)
+    
+    return this.aggregatePredictions(predictions, threshold)
+  }
+
+  /**
+   * Predict with adaptive step size based on confidence
+   * Slows down when uncertainty is high
+   * @param {Array<number>} powerData - Full day of power readings
+   * @param {number} threshold - Minimum probability threshold for tag detection
+   * @returns {Array<Object>} Time-series predictions with confidence
+   */
+  async predictDayAdaptive(powerData, threshold = 0.3) {
+    console.log(`Starting adaptive sliding window prediction...`)
+    console.log(`Window: ${this.windowSize}min, Adaptive step size, Data points: ${powerData.length}`)
+
+    const predictions = []
+    let currentIdx = 0
+
+    while (currentIdx + this.windowSizeInSteps <= powerData.length) {
+      const window = powerData.slice(currentIdx, currentIdx + this.windowSizeInSteps)
+      
+      // Prepare tensor
+      const x = tf.tensor3d([window.map(v => [v])], [1, this.windowSizeInSteps, 1])
+      
+      // Predict
+      const pred = this.model.predict(x)
+      const predArray = await pred.array()
+      const predData = predArray[0]
+      
+      // Calculate max confidence
+      const maxConfidence = Math.max(...predData)
+      
+      predictions.push({
+        startIdx: currentIdx,
+        endIdx: currentIdx + this.windowSizeInSteps,
+        startMinute: Math.floor(currentIdx / this.timeStepsPerMinute),
+        predictions: predData,
+        tags: this.getTopTags(predData, threshold),
+        confidence: maxConfidence
+      })
+
+      // Cleanup
+      x.dispose()
+      pred.dispose()
+
+      // Adaptive step size: move slower when confidence is low
+      const adaptiveStep = this.getAdaptiveStepSize(maxConfidence)
+      currentIdx += adaptiveStep * this.timeStepsPerMinute
+
+      if (predictions.length % 50 === 0) {
+        console.log(`Processed ${predictions.length} windows...`)
+      }
+    }
+
+    console.log(`✅ Completed ${predictions.length} predictions (adaptive)`)
+    return this.aggregatePredictions(predictions)
+  }
+
+  /**
+   * Calculate adaptive step size based on prediction confidence
+   * @param {number} confidence - Maximum confidence from predictions
+   * @returns {number} Step size in minutes
+   */
+  getAdaptiveStepSize(confidence) {
+    if (confidence < 0.5) return 1  // Low confidence: step by 1 min
+    if (confidence < 0.7) return 3  // Medium: step by 3 min
+    return this.stepSize              // High: use default step size
+  }
+
+  /**
+   * Get tags above threshold with their probabilities
+   * @param {Array<number>} predictions - Array of probabilities for each tag
+   * @param {number} threshold - Minimum probability threshold
+   * @returns {Array<Object>} Array of {tag, prob} objects
+   */
+  getTopTags(predictions, threshold = 0.3) {
+    const tags = this.model.getTags()
+    return predictions
+      .map((prob, idx) => ({ tag: tags[idx], prob }))
+      .filter(item => item.prob >= threshold)
+      .sort((a, b) => b.prob - a.prob)
+  }
+
+  /**
+   * Aggregate overlapping predictions using averaging
+   * Each minute gets predictions from multiple overlapping windows
+   * @param {Array<Object>} predictions - Array of prediction objects
+   * @param {number} threshold - Minimum probability threshold for tag detection
+   * @returns {Array<Object>} Aggregated predictions per minute
+   */
+  aggregatePredictions(predictions, threshold = 0.3) {
+    console.log('Aggregating predictions...')
+    const minuteMap = new Map()
+
+    // Collect all predictions for each minute
+    predictions.forEach(pred => {
+      const startMinute = Math.floor(pred.startIdx / this.timeStepsPerMinute)
+      const endMinute = Math.floor(pred.endIdx / this.timeStepsPerMinute)
+
+      for (let minute = startMinute; minute < endMinute; minute++) {
+        if (!minuteMap.has(minute)) {
+          minuteMap.set(minute, [])
+        }
+        minuteMap.get(minute).push(pred.predictions)
+      }
+    })
+
+    // Average predictions for each minute
+    const result = []
+    for (const [minute, predList] of minuteMap.entries()) {
+      const avgPred = this.averagePredictions(predList)
+      const topTags = this.getTopTags(avgPred, threshold) // Use the passed threshold
+      
+      result.push({
+        minute,
+        hour: Math.floor(minute / 60),
+        minuteOfHour: minute % 60,
+        predictions: avgPred,
+        tags: topTags,
+        numPredictions: predList.length, // How many windows covered this minute
+        maxProb: Math.max(...avgPred)
+      })
+    }
+
+    console.log(`✅ Aggregated to ${result.length} minute-level predictions`)
+    return result.sort((a, b) => a.minute - b.minute)
+  }
+
+  /**
+   * Average multiple prediction arrays
+   * @param {Array<Array<number>>} predList - List of prediction arrays
+   * @returns {Array<number>} Averaged predictions
+   */
+  averagePredictions(predList) {
+    const numClasses = predList[0].length
+    const avg = new Array(numClasses).fill(0)
+    
+    predList.forEach(pred => {
+      pred.forEach((val, idx) => {
+        avg[idx] += val / predList.length
+      })
+    })
+    
+    return avg
+  }
+
+  /**
+   * Format predictions for display or API response
+   * Groups consecutive minutes with same tags
+   * @param {Array<Object>} minutePredictions - Aggregated minute predictions
+   * @returns {Array<Object>} Formatted time ranges with tags
+   */
+  formatPredictions(minutePredictions) {
+    if (minutePredictions.length === 0) return []
+
+    const timeRanges = []
+    let currentRange = null
+
+    minutePredictions.forEach(pred => {
+      const tagNames = pred.tags.map(t => t.tag).sort().join(',')
+      
+      if (!currentRange || currentRange.tagNames !== tagNames) {
+        // Start new range
+        if (currentRange) {
+          timeRanges.push(currentRange)
+        }
+        currentRange = {
+          startMinute: pred.minute,
+          endMinute: pred.minute + 1,
+          startTime: this.minuteToTime(pred.minute),
+          endTime: this.minuteToTime(pred.minute + 1),
+          tags: pred.tags,
+          tagNames,
+          avgConfidence: pred.maxProb,
+          count: 1
+        }
+      } else {
+        // Extend current range
+        currentRange.endMinute = pred.minute + 1
+        currentRange.endTime = this.minuteToTime(pred.minute + 1)
+        currentRange.avgConfidence = 
+          (currentRange.avgConfidence * currentRange.count + pred.maxProb) / (currentRange.count + 1)
+        currentRange.count++
+      }
+    })
+
+    if (currentRange) {
+      timeRanges.push(currentRange)
+    }
+
+    return timeRanges
+  }
+
+  /**
+   * Convert minute of day to HH:MM format
+   * @param {number} minute - Minute of day (0-1439)
+   * @returns {string} Time in HH:MM format
+   */
+  minuteToTime(minute) {
+    const h = Math.floor(minute / 60)
+    const m = minute % 60
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+  }
+
+  /**
+   * Update configuration
+   * @param {Object} config - Configuration object
+   */
+  setConfig(config) {
+    if (config.windowSize) {
+      this.windowSize = config.windowSize
+      this.windowSizeInSteps = config.windowSize * this.timeStepsPerMinute
+    }
+    if (config.stepSize) {
+      this.stepSize = config.stepSize
+      this.stepSizeInSteps = config.stepSize * this.timeStepsPerMinute
+    }
+    if (config.timeStepsPerMinute) {
+      this.timeStepsPerMinute = config.timeStepsPerMinute
+      this.windowSizeInSteps = this.windowSize * config.timeStepsPerMinute
+      this.stepSizeInSteps = this.stepSize * config.timeStepsPerMinute
+    }
+  }
+}
+
+export default SlidingWindowPredictor

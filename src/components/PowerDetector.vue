@@ -28,6 +28,44 @@
       </button>
     </div>
 
+    <!-- Configuration Section -->
+    <div class="config-section">
+      <details>
+        <summary>⚙️ Advanced Settings</summary>
+        <div class="config-content">
+          <div class="config-item">
+            <label for="stepSize">Sliding Window Step Size (minutes):</label>
+            <select id="stepSize" v-model.number="stepSize">
+              <option :value="1">1 minute (High Precision - Slow)</option>
+              <option :value="3">3 minutes</option>
+              <option :value="5">5 minutes (Recommended - Balanced)</option>
+              <option :value="10">10 minutes (Fast)</option>
+            </select>
+            <span class="config-hint">Smaller steps = more precise but slower</span>
+          </div>
+          <div class="config-item">
+            <label for="threshold">Detection Threshold:</label>
+            <input 
+              type="range" 
+              id="threshold" 
+              v-model.number="threshold" 
+              min="0.1" 
+              max="0.7" 
+              step="0.05"
+            />
+            <span class="config-value">{{ (threshold * 100).toFixed(0) }}%</span>
+            <span class="config-hint">Higher = fewer false positives</span>
+          </div>
+          <div class="config-item checkbox">
+            <label>
+              <input type="checkbox" v-model="useNewPredictor" />
+              Use new sliding window predictor (multi-label detection)
+            </label>
+          </div>
+        </div>
+      </details>
+    </div>
+
     <!-- Status Messages -->
     <div v-if="!props.sessionId && !loading" class="status-warning">
       ⚠️ Not connected to Home Assistant. Please connect in the Power Tagging tab first.
@@ -110,7 +148,7 @@
             <thead>
               <tr>
                 <th>Time Range</th>
-                <th>Predicted Tag</th>
+                <th>Predicted Tags</th>
                 <th>Confidence</th>
                 <th>Avg Power</th>
                 <th>Appliance Energy (Wh)</th>
@@ -121,7 +159,22 @@
               <tr v-for="(pred, idx) in predictions" :key="idx">
                 <td>{{ pred.startTime }} - {{ pred.endTime }}</td>
                 <td>
-                  <span class="tag-badge" :style="{ backgroundColor: pred.color }">
+                  <div v-if="pred.tags && pred.tags.length > 1" class="multi-tags">
+                    <span 
+                      v-for="(tagInfo, tidx) in pred.tags" 
+                      :key="tidx"
+                      class="tag-badge" 
+                      :style="{ backgroundColor: getTagColor(tagInfo.tag) }"
+                      :title="`${(tagInfo.prob * 100).toFixed(1)}%`"
+                    >
+                      {{ tagInfo.tag === 'standby' ? 'other' : tagInfo.tag }}
+                    </span>
+                  </div>
+                  <span 
+                    v-else 
+                    class="tag-badge" 
+                    :style="{ backgroundColor: pred.color }"
+                  >
                     {{ pred.displayTag || pred.tag }}
                   </span>
                 </td>
@@ -170,6 +223,11 @@ const powerChartCanvas = ref(null)
 const pieChartCanvas = ref(null)
 const showDetailedPredictions = ref(false)
 
+// Configuration
+const stepSize = ref(5) // Default 5 minutes
+const threshold = ref(0.25) // Default 25% threshold for multi-label
+const useNewPredictor = ref(false) // Use old predictor by default until tested
+
 // Color palette for tags
 const tagColors = [
   '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF',
@@ -209,12 +267,27 @@ const avgPower = computed(() => {
 const energyByTag = computed(() => {
   const byTag = {}
   predictions.value.forEach(p => {
-    // Rename "standby" tag to "other" for display
-    const tagName = p.tag === 'standby' ? 'other' : p.tag
-    if (!byTag[tagName]) {
-      byTag[tagName] = 0
+    // Handle multi-label: distribute energy among all detected tags
+    if (useNewPredictor.value && p.tags && p.tags.length > 0) {
+      // Multi-label case: split energy among detected tags proportionally
+      const totalProb = p.tags.reduce((sum, t) => sum + t.prob, 0)
+      p.tags.forEach(tagInfo => {
+        const tagName = tagInfo.tag === 'standby' ? 'other' : tagInfo.tag
+        if (!byTag[tagName]) {
+          byTag[tagName] = 0
+        }
+        // Weight energy by probability
+        const weight = totalProb > 0 ? tagInfo.prob / totalProb : 1 / p.tags.length
+        byTag[tagName] += (p.energy || 0) * weight
+      })
+    } else {
+      // Single label case (legacy)
+      const tagName = p.tag === 'standby' ? 'other' : p.tag
+      if (!byTag[tagName]) {
+        byTag[tagName] = 0
+      }
+      byTag[tagName] += p.energy || 0
     }
-    byTag[tagName] += p.energy
   })
   
   // Add baseline as a separate category for the total standby consumption across all periods
@@ -323,13 +396,26 @@ const loadAndPredict = async () => {
     }
 
     // Call the prediction endpoint with sliding window
-    const predictResponse = await fetch('http://localhost:3001/api/ml/predict-day', {
+    const endpoint = useNewPredictor.value 
+      ? 'http://localhost:3001/api/ml/predict-day-sliding'
+      : 'http://localhost:3001/api/ml/predict-day'
+    
+    const requestBody = useNewPredictor.value
+      ? {
+          date: selectedDate.value,
+          powerData: powerData.value,
+          stepSize: stepSize.value,
+          threshold: threshold.value
+        }
+      : {
+          date: selectedDate.value,
+          powerData: powerData.value
+        }
+
+    const predictResponse = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        date: selectedDate.value,
-        powerData: powerData.value
-      })
+      body: JSON.stringify(requestBody)
     })
 
     if (!predictResponse.ok) {
@@ -361,11 +447,35 @@ const loadAndPredict = async () => {
     // Model is loaded if we got here successfully
     modelLoaded.value = true
     
-    predictions.value = result.predictions.map((p) => ({
-      ...p,
-      displayTag: p.tag === 'standby' ? 'other' : p.tag, // Display "other" instead of "standby"
-      color: getTagColor(p.tag)
-    }))
+    // Handle different response formats
+    if (useNewPredictor.value && result.timeRanges) {
+      // New sliding window format with minute-level predictions
+      // Convert time ranges to display format
+      predictions.value = result.timeRanges.map((range) => {
+        const tags = range.tags || []
+        const primaryTag = tags.length > 0 ? tags[0].tag : 'standby'
+        return {
+          startTime: range.startTime,
+          endTime: range.endTime,
+          tag: primaryTag,
+          tags: tags, // All detected tags
+          confidence: range.avgConfidence || (tags.length > 0 ? tags[0].prob : 0),
+          avgPower: range.avgPower || 0,
+          energy: range.energy || 0,
+          standbyEnergy: 0, // Could be calculated if needed
+          displayTag: primaryTag === 'standby' ? 'other' : primaryTag,
+          color: getTagColor(primaryTag),
+          allProbabilities: tags.map(t => ({ tag: t.tag, probability: t.prob }))
+        }
+      })
+    } else {
+      // Legacy format with 10-minute windows
+      predictions.value = result.predictions.map((p) => ({
+        ...p,
+        displayTag: p.tag === 'standby' ? 'other' : p.tag,
+        color: getTagColor(p.tag)
+      }))
+    }
 
     // Render charts
     await nextTick()
@@ -638,6 +748,96 @@ onUnmounted(() => {
   font-size: 0.95rem;
 }
 
+.config-section {
+  margin-bottom: 1rem;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  padding: 1rem;
+}
+
+.config-section summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #2c3e50;
+  padding: 0.5rem;
+  user-select: none;
+}
+
+.config-section summary:hover {
+  color: #3498db;
+}
+
+.config-content {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #ecf0f1;
+}
+
+.config-item {
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.config-item label {
+  min-width: 200px;
+  font-weight: 500;
+  color: #555;
+}
+
+.config-item select,
+.config-item input[type="range"] {
+  flex: 1;
+  max-width: 300px;
+}
+
+.config-item select {
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+  color: #2c3e50;
+  font-size: 0.95rem;
+}
+
+.config-item input[type="range"] {
+  margin: 0 0.5rem;
+}
+
+.config-value {
+  min-width: 50px;
+  font-weight: 600;
+  color: #3498db;
+}
+
+.config-hint {
+  font-size: 0.85rem;
+  color: #95a5a6;
+  font-style: italic;
+  margin-left: 0.5rem;
+}
+
+.config-item.checkbox {
+  margin-top: 0.5rem;
+}
+
+.config-item.checkbox label {
+  min-width: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.config-item.checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
 .date-selector {
   display: flex;
   align-items: center;
@@ -888,6 +1088,13 @@ tbody tr:hover {
   color: white;
   font-size: 0.85rem;
   font-weight: 600;
+  margin: 0.125rem;
+}
+
+.multi-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
 }
 
 .confidence-bar {

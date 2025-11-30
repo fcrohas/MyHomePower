@@ -81,19 +81,19 @@ export class PowerTagPredictor {
 
     dense = tf.layers.dropout({ rate: 0.3 }).apply(dense)
 
-    // Output layer with softmax for multi-class classification
+    // Output layer with sigmoid for multi-label classification
     const output = tf.layers.dense({
       units: numClasses,
-      activation: 'softmax'
+      activation: 'sigmoid'
     }).apply(dense)
 
     this.model = tf.model({ inputs: input, outputs: output })
 
-    // Compile the model
+    // Compile the model for multi-label classification
     this.model.compile({
       optimizer: tf.train.adam(0.001),
-      loss: 'categoricalCrossentropy',
-      metrics: ['accuracy']
+      loss: 'binaryCrossentropy',
+      metrics: ['binaryAccuracy']
     })
 
     this.isCompiled = true
@@ -136,11 +136,14 @@ export class PowerTagPredictor {
       shuffle: true,
       callbacks: {
         onEpochEnd: async (epoch, logs) => {
+          const acc = logs.binaryAccuracy || logs.acc || 0
+          const valAcc = logs.val_binaryAccuracy || logs.val_acc || 0
+          
           console.log(`Epoch ${epoch + 1}/${epochs}:`, 
             `loss=${logs.loss.toFixed(4)}, ` +
-            `acc=${logs.acc.toFixed(4)}, ` +
+            `acc=${acc.toFixed(4)}, ` +
             `val_loss=${logs.val_loss.toFixed(4)}, ` +
-            `val_acc=${logs.val_acc.toFixed(4)}`)
+            `val_acc=${valAcc.toFixed(4)}`)
           
           if (onEpochEnd) {
             await onEpochEnd(epoch, logs)

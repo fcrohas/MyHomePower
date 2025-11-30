@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url'
 import { dirname } from 'path'
 import * as tf from '@tensorflow/tfjs-node'
 import { PowerTagPredictor } from './ml/model.js'
+import { SlidingWindowPredictor } from './ml/slidingWindowPredictor.js'
 import { loadAllData, prepareTrainingData, createTensors, preparePredictionInput } from './ml/dataPreprocessing.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -416,18 +417,24 @@ app.post('/api/ml/train', async (req, res) => {
       throw new Error('No training data found in data folder')
     }
 
-    // Prepare training data
-    const { xData, yData, uniqueTags, stats } = prepareTrainingData(datasets)
+    // Prepare training data with 1-minute step for more training samples
+    const { xData, yData, uniqueTags, stats } = prepareTrainingData(
+      datasets,
+      5,  // numWindows (5 x 10min = 50min lookback)
+      10, // windowSizeMinutes
+      60, // pointsPerWindow
+      1   // stepSizeMinutes (1-minute step for data augmentation)
+    )
     mlTags = uniqueTags
     mlStats = stats
 
     // Create tensors
     const { xTrain, yTrain, xVal, yVal } = createTensors(xData, yData, 0.8)
 
-    // Build model
+    // Build model with multi-label classification
     mlModel = new PowerTagPredictor()
     mlModel.setTags(uniqueTags)
-    mlModel.buildModel(60, 5, uniqueTags.length)
+    mlModel.buildModel(300, 1, uniqueTags.length) // 300 = 5 windows * 60 points per window
 
     // Set up SSE for streaming training progress
     res.writeHead(200, {
@@ -438,12 +445,15 @@ app.post('/api/ml/train', async (req, res) => {
 
     // Training callback
     const onEpochEnd = async (epoch, logs) => {
+      const acc = logs.binaryAccuracy || logs.acc || 0
+      const valAcc = logs.val_binaryAccuracy || logs.val_acc || 0
+      
       const progress = {
         epoch: epoch + 1,
         loss: logs.loss,
-        accuracy: logs.acc,
+        accuracy: acc,
         valLoss: logs.val_loss,
-        valAccuracy: logs.val_acc
+        valAccuracy: valAcc
       }
       trainingHistory.push(progress)
 
@@ -451,8 +461,8 @@ app.post('/api/ml/train', async (req, res) => {
       res.write(`data: ${JSON.stringify(progress)}\n\n`)
     }
 
-    // Train the model
-    const epochs = 20
+    // Train the model (more epochs for multi-label classification)
+    const epochs = 30
     const batchSize = 32
 
     await mlModel.train(xTrain, yTrain, xVal, yVal, epochs, batchSize, onEpochEnd)
@@ -569,7 +579,10 @@ app.post('/api/ml/predict', async (req, res) => {
     // Sort by probability
     tagProbabilities.sort((a, b) => b.probability - a.probability)
 
-    // Get predicted tag (highest probability)
+    // Multi-label: get all tags above threshold (0.3)
+    const predictedTags = tagProbabilities.filter(t => t.probability >= 0.3)
+    
+    // For backward compatibility, also include the top tag
     const predictedTag = tagProbabilities[0].tag
     const confidence = tagProbabilities[0].probability
 
@@ -580,6 +593,7 @@ app.post('/api/ml/predict', async (req, res) => {
     res.json({
       predictedTag,
       confidence,
+      predictedTags, // Array of all tags above threshold
       allProbabilities: tagProbabilities
     })
 
@@ -592,7 +606,106 @@ app.post('/api/ml/predict', async (req, res) => {
   }
 })
 
-// Predict tags for entire day using sliding windows
+// Predict tags for entire day using sliding windows with new predictor
+app.post('/api/ml/predict-day-sliding', async (req, res) => {
+  try {
+    const { date, powerData, stepSize = 5, threshold = 0.3 } = req.body
+
+    if (!date || !powerData || !Array.isArray(powerData)) {
+      return res.status(400).json({ error: 'Missing date or powerData array' })
+    }
+
+    // Load model if not in memory
+    if (!mlModel) {
+      const modelDir = path.join(__dirname, 'ml', 'saved_model')
+      const metadataPath = path.join(modelDir, 'metadata.json')
+
+      if (!fs.existsSync(metadataPath)) {
+        return res.status(404).json({ error: 'No trained model found. Please train the model first.' })
+      }
+
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+      mlTags = metadata.uniqueTags
+      mlStats = metadata.stats
+
+      mlModel = new PowerTagPredictor()
+      mlModel.setTags(mlTags)
+      await mlModel.load(modelDir)
+
+      console.log('✅ ML model loaded from disk')
+    }
+
+    console.log(`Making sliding window predictions for ${date} with step size: ${stepSize} minutes`)
+
+    // Sort and format power data
+    const sortedData = powerData.map(d => ({
+      timestamp: d.timestamp || d.last_changed || d.last_updated,
+      value: d.value || d.state || d.power
+    })).filter(d => d.timestamp && d.value).sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    )
+
+    if (sortedData.length === 0) {
+      return res.status(400).json({ error: 'No valid power data provided' })
+    }
+
+    console.log(`Power data info:`)
+    console.log(`  Total points: ${sortedData.length}`)
+    console.log(`  First timestamp: ${sortedData[0].timestamp}`)
+    console.log(`  Last timestamp: ${sortedData[sortedData.length - 1].timestamp}`)
+
+    // Create sliding window predictor
+    const predictor = new SlidingWindowPredictor(
+      mlModel.model,  // Pass the TensorFlow model
+      mlTags,         // Tag names
+      mlStats,        // Normalization stats
+      stepSize        // Step size in minutes
+    )
+
+    // Make predictions
+    const targetDate = new Date(date)
+    const predictions = await predictor.predictDay(sortedData, targetDate, threshold)
+    
+    // Calculate statistics
+    const tagStats = {}
+    let totalEnergy = 0
+    
+    predictions.forEach(pred => {
+      totalEnergy += pred.energy || 0
+      
+      pred.tags.forEach(t => {
+        if (!tagStats[t.tag]) {
+          tagStats[t.tag] = { count: 0, totalProb: 0 }
+        }
+        tagStats[t.tag].count++
+        tagStats[t.tag].totalProb += t.probability
+      })
+    })
+
+    // Calculate average probability for each tag
+    Object.keys(tagStats).forEach(tag => {
+      tagStats[tag].avgProb = tagStats[tag].totalProb / tagStats[tag].count
+    })
+
+    res.json({
+      date,
+      predictions,
+      totalWindows: predictions.length,
+      tags: mlTags,
+      tagStats,
+      totalEnergy
+    })
+
+  } catch (error) {
+    console.error('Sliding window prediction error:', error)
+    res.status(500).json({
+      error: 'Failed to make sliding window predictions',
+      message: error.message
+    })
+  }
+})
+
+// Predict tags for entire day using sliding windows (LEGACY - kept for backward compatibility)
 // NOTE: To predict from midnight (00:00), powerData must include data starting from
 // 23:10 the previous day (50 minutes = 5 windows x 10 minutes lookback required)
 app.post('/api/ml/predict-day', async (req, res) => {
@@ -738,9 +851,12 @@ app.post('/api/ml/predict-day', async (req, res) => {
           // Sort by probability
           tagProbabilities.sort((a, b) => b.probability - a.probability)
 
-          // Get predicted tag
-          const predictedTag = tagProbabilities[0].tag
-          const confidence = tagProbabilities[0].probability
+          // Multi-label: get all tags above threshold
+          const predictedTags = tagProbabilities.filter(t => t.probability >= 0.3)
+          
+          // For backward compatibility
+          const predictedTag = predictedTags.length > 0 ? predictedTags[0].tag : tagProbabilities[0].tag
+          const confidence = predictedTags.length > 0 ? predictedTags[0].probability : tagProbabilities[0].probability
 
           // Calculate average power and energy for this window
           const windowData = sortedData.filter(d => {
@@ -768,6 +884,7 @@ app.post('/api/ml/predict-day', async (req, res) => {
             startTime: startTimeStr,
             endTime: endTimeStr,
             tag: predictedTag,
+            tags: predictedTags, // Array of all predicted tags
             confidence: confidence,
             avgPower: avgPower,
             energy: energy,
