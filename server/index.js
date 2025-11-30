@@ -33,6 +33,7 @@ let mlTags = []
 let trainingInProgress = false
 let trainingHistory = []
 let trainingMetadata = null
+let currentModelId = null
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -468,15 +469,23 @@ app.post('/api/ml/train', async (req, res) => {
 
     await mlModel.train(xTrain, yTrain, xVal, yVal, epochs, batchSize, onEpochEnd)
 
-    // Save the model
-    const modelDir = path.join(__dirname, 'ml', 'saved_model')
+    // Save the model with unique ID
+    const modelId = Date.now().toString()
+    const modelsBaseDir = path.join(__dirname, 'ml', 'models')
+    const modelDir = path.join(modelsBaseDir, modelId)
+    
     if (!fs.existsSync(modelDir)) {
       fs.mkdirSync(modelDir, { recursive: true })
     }
+    
     await mlModel.save(modelDir)
+
+    // Calculate final metrics
+    const finalMetrics = trainingHistory[trainingHistory.length - 1]
 
     // Save metadata
     const metadata = {
+      id: modelId,
       uniqueTags: mlTags,
       stats: mlStats,
       trainedAt: new Date().toISOString(),
@@ -485,13 +494,23 @@ app.post('/api/ml/train', async (req, res) => {
         numberOfDays: datasets.length,
         dates: datasets.map(d => d.date),
         totalSamples: xData.length
+      },
+      finalMetrics: {
+        loss: finalMetrics.loss,
+        accuracy: finalMetrics.accuracy,
+        valLoss: finalMetrics.valLoss,
+        valAccuracy: finalMetrics.valAccuracy
       }
     }
-    trainingMetadata = metadata
+    
     fs.writeFileSync(
       path.join(modelDir, 'metadata.json'),
       JSON.stringify(metadata, null, 2)
     )
+
+    // Set as current model
+    currentModelId = modelId
+    trainingMetadata = metadata
 
     // Clean up tensors
     xTrain.dispose()
@@ -529,7 +548,8 @@ app.get('/api/ml/status', (req, res) => {
     modelLoaded: mlModel !== null,
     tags: mlTags,
     historyLength: trainingHistory.length,
-    metadata: trainingMetadata
+    metadata: trainingMetadata,
+    currentModelId: currentModelId
   })
 })
 
@@ -540,6 +560,127 @@ app.get('/api/ml/history', (req, res) => {
     tags: mlTags,
     stats: mlStats
   })
+})
+
+// List all saved models
+app.get('/api/ml/models', (req, res) => {
+  try {
+    const modelsDir = path.join(__dirname, 'ml', 'models')
+    
+    if (!fs.existsSync(modelsDir)) {
+      return res.json({ models: [] })
+    }
+
+    const modelDirs = fs.readdirSync(modelsDir).filter(item => {
+      const itemPath = path.join(modelsDir, item)
+      return fs.statSync(itemPath).isDirectory()
+    })
+
+    const models = []
+    for (const modelId of modelDirs) {
+      const metadataPath = path.join(modelsDir, modelId, 'metadata.json')
+      if (fs.existsSync(metadataPath)) {
+        try {
+          const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+          models.push({
+            id: modelId,
+            trainedAt: metadata.trainedAt,
+            uniqueTags: metadata.uniqueTags,
+            datasetInfo: metadata.datasetInfo,
+            finalMetrics: metadata.finalMetrics,
+            isActive: modelId === currentModelId
+          })
+        } catch (err) {
+          console.warn(`Failed to load metadata for model ${modelId}:`, err.message)
+        }
+      }
+    }
+
+    // Sort by trained date (newest first)
+    models.sort((a, b) => new Date(b.trainedAt) - new Date(a.trainedAt))
+
+    res.json({ models, currentModelId })
+  } catch (error) {
+    console.error('Error listing models:', error)
+    res.status(500).json({ error: 'Failed to list models', message: error.message })
+  }
+})
+
+// Load a specific model
+app.post('/api/ml/models/load', async (req, res) => {
+  try {
+    const { modelId } = req.body
+
+    if (!modelId) {
+      return res.status(400).json({ error: 'modelId is required' })
+    }
+
+    const modelsDir = path.join(__dirname, 'ml', 'models')
+    const modelPath = path.join(modelsDir, modelId)
+    const metadataPath = path.join(modelPath, 'metadata.json')
+
+    if (!fs.existsSync(modelPath) || !fs.existsSync(metadataPath)) {
+      return res.status(404).json({ error: 'Model not found' })
+    }
+
+    // Load metadata
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+
+    // Load the model
+    mlModel = new PowerTagPredictor()
+    await mlModel.load(modelPath)
+    mlModel.setTags(metadata.uniqueTags)
+
+    // Update state
+    mlTags = metadata.uniqueTags
+    mlStats = metadata.stats
+    trainingHistory = metadata.trainingHistory || []
+    trainingMetadata = metadata
+    currentModelId = modelId
+
+    console.log(`✅ Loaded model ${modelId} from ${metadata.trainedAt}`)
+
+    res.json({ 
+      success: true, 
+      message: 'Model loaded successfully',
+      metadata: metadata
+    })
+  } catch (error) {
+    console.error('Error loading model:', error)
+    res.status(500).json({ error: 'Failed to load model', message: error.message })
+  }
+})
+
+// Delete a model
+app.delete('/api/ml/models/:modelId', (req, res) => {
+  try {
+    const { modelId } = req.params
+
+    if (!modelId) {
+      return res.status(400).json({ error: 'modelId is required' })
+    }
+
+    if (modelId === currentModelId) {
+      return res.status(400).json({ error: 'Cannot delete the currently active model' })
+    }
+
+    const modelsDir = path.join(__dirname, 'ml', 'models')
+    const modelPath = path.join(modelsDir, modelId)
+
+    if (!fs.existsSync(modelPath)) {
+      return res.status(404).json({ error: 'Model not found' })
+    }
+
+    // Delete the model directory
+    fs.rmSync(modelPath, { recursive: true, force: true })
+
+    console.log(`🗑️ Deleted model ${modelId}`)
+
+    res.json({ success: true, message: 'Model deleted successfully' })
+  } catch (error) {
+    console.error('Error deleting model:', error)
+    res.status(500).json({ error: 'Failed to delete model', message: error.message })
+  }
 })
 
 // Predict tags for next 10 minutes
@@ -968,22 +1109,51 @@ app.listen(PORT, () => {
   console.log(`🚀 Power Viewer API server running on http://localhost:${PORT}`)
   console.log(`📊 Ready to proxy Home Assistant requests`)
   
-  // Load existing model metadata if available
-  const modelDir = path.join(__dirname, 'ml', 'saved_model')
-  const metadataPath = path.join(modelDir, 'metadata.json')
+  // Load the most recent model from models directory
+  const modelsDir = path.join(__dirname, 'ml', 'models')
   
-  if (fs.existsSync(metadataPath)) {
+  if (fs.existsSync(modelsDir)) {
     try {
-      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
-      trainingMetadata = metadata
-      mlTags = metadata.uniqueTags || []
-      mlStats = metadata.stats || null
-      trainingHistory = metadata.trainingHistory || []
-      console.log(`✅ Loaded training metadata from ${metadata.trainedAt}`)
-      console.log(`   - ${metadata.datasetInfo?.numberOfDays || 'N/A'} days of training data`)
-      console.log(`   - ${mlTags.length} unique tags`)
+      const modelDirs = fs.readdirSync(modelsDir).filter(item => {
+        const itemPath = path.join(modelsDir, item)
+        return fs.statSync(itemPath).isDirectory()
+      })
+
+      if (modelDirs.length > 0) {
+        // Find the most recent model
+        let latestModel = null
+        let latestDate = null
+
+        for (const modelId of modelDirs) {
+          const metadataPath = path.join(modelsDir, modelId, 'metadata.json')
+          if (fs.existsSync(metadataPath)) {
+            const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+            const trainedDate = new Date(metadata.trainedAt)
+            
+            if (!latestDate || trainedDate > latestDate) {
+              latestDate = trainedDate
+              latestModel = { id: modelId, metadata }
+            }
+          }
+        }
+
+        if (latestModel) {
+          currentModelId = latestModel.id
+          trainingMetadata = latestModel.metadata
+          mlTags = latestModel.metadata.uniqueTags || []
+          mlStats = latestModel.metadata.stats || null
+          trainingHistory = latestModel.metadata.trainingHistory || []
+          
+          console.log(`✅ Loaded latest model ${currentModelId}`)
+          console.log(`   - Trained: ${latestModel.metadata.trainedAt}`)
+          console.log(`   - ${latestModel.metadata.datasetInfo?.numberOfDays || 'N/A'} days of training data`)
+          console.log(`   - ${mlTags.length} unique tags`)
+        }
+      } else {
+        console.log('ℹ️ No saved models found')
+      }
     } catch (err) {
-      console.warn('⚠️ Failed to load training metadata:', err.message)
+      console.warn('⚠️ Failed to load model:', err.message)
     }
   }
 })

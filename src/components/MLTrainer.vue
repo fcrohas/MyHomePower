@@ -65,6 +65,61 @@
       </div>
     </div>
 
+    <!-- Model Management Section -->
+    <div v-if="savedModels.length > 0" class="models-section">
+      <h3>📦 Saved Models</h3>
+      <div class="models-table-container">
+        <table class="models-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Days</th>
+              <th>Samples</th>
+              <th>Tags</th>
+              <th>Val Accuracy</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="model in savedModels" :key="model.id" :class="{ 'active-model': model.isActive }">
+              <td>{{ formatDate(model.trainedAt) }}</td>
+              <td>{{ model.datasetInfo?.numberOfDays || 'N/A' }}</td>
+              <td>{{ model.datasetInfo?.totalSamples?.toLocaleString() || 'N/A' }}</td>
+              <td>{{ model.uniqueTags?.length || 0 }}</td>
+              <td>
+                <span class="accuracy-badge" :class="getAccuracyClass(model.finalMetrics?.valAccuracy)">
+                  {{ (model.finalMetrics?.valAccuracy * 100).toFixed(2) }}%
+                </span>
+              </td>
+              <td>
+                <span v-if="model.isActive" class="status-badge active">Active</span>
+                <span v-else class="status-badge inactive">Inactive</span>
+              </td>
+              <td class="actions-cell">
+                <button 
+                  v-if="!model.isActive"
+                  @click="loadModel(model.id)"
+                  class="btn btn-small btn-load"
+                  :disabled="loadingModel"
+                >
+                  Load
+                </button>
+                <button 
+                  v-if="!model.isActive"
+                  @click="deleteModel(model.id)"
+                  class="btn btn-small btn-delete"
+                  :disabled="deletingModel"
+                >
+                  Delete
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Training Progress -->
     <div v-if="trainingInProgress || trainingHistory.length > 0" class="progress-section">
       <div v-if="trainingInProgress" class="progress-bar">
@@ -129,7 +184,10 @@ export default {
       modelTrained: false,
       error: null,
       chart: null,
-      trainingMetadata: null
+      trainingMetadata: null,
+      savedModels: [],
+      loadingModel: false,
+      deletingModel: false
     }
   },
   computed: {
@@ -149,6 +207,7 @@ export default {
   },
   mounted() {
     this.checkModelStatus()
+    this.loadModelsList()
   },
   beforeUnmount() {
     if (this.chart) {
@@ -181,6 +240,101 @@ export default {
       } catch (err) {
         console.error('Failed to check model status:', err)
       }
+    },
+
+    async loadModelsList() {
+      try {
+        const response = await fetch('http://localhost:3001/api/ml/models')
+        const data = await response.json()
+        this.savedModels = data.models || []
+      } catch (err) {
+        console.error('Failed to load models list:', err)
+      }
+    },
+
+    async loadModel(modelId) {
+      this.loadingModel = true
+      this.error = null
+
+      try {
+        const response = await fetch('http://localhost:3001/api/ml/models/load', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ modelId })
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to load model')
+        }
+
+        const data = await response.json()
+        
+        // Update UI with loaded model
+        this.trainingMetadata = data.metadata
+        this.trainingHistory = data.metadata.trainingHistory || []
+        this.currentMetrics = this.trainingHistory[this.trainingHistory.length - 1]
+        this.currentEpoch = this.currentMetrics?.epoch || 0
+        this.totalEpochs = this.trainingHistory[this.trainingHistory.length - 1]?.epoch || 50
+        this.modelTrained = true
+
+        // Refresh models list
+        await this.loadModelsList()
+
+        // Update chart
+        this.$nextTick(() => {
+          if (this.$refs.chartCanvas && this.trainingHistory.length > 0) {
+            if (this.chart) {
+              this.chart.destroy()
+              this.chart = null
+            }
+            this.createChart()
+          }
+        })
+
+        console.log('✅ Model loaded successfully')
+      } catch (err) {
+        this.error = 'Failed to load model: ' + err.message
+        console.error('Load model error:', err)
+      } finally {
+        this.loadingModel = false
+      }
+    },
+
+    async deleteModel(modelId) {
+      if (!confirm('Are you sure you want to delete this model?')) {
+        return
+      }
+
+      this.deletingModel = true
+      this.error = null
+
+      try {
+        const response = await fetch(`http://localhost:3001/api/ml/models/${modelId}`, {
+          method: 'DELETE'
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to delete model')
+        }
+
+        // Refresh models list
+        await this.loadModelsList()
+        console.log('🗑️ Model deleted successfully')
+      } catch (err) {
+        this.error = 'Failed to delete model: ' + err.message
+        console.error('Delete model error:', err)
+      } finally {
+        this.deletingModel = false
+      }
+    },
+
+    getAccuracyClass(accuracy) {
+      if (!accuracy) return 'accuracy-low'
+      if (accuracy >= 0.95) return 'accuracy-high'
+      if (accuracy >= 0.85) return 'accuracy-medium'
+      return 'accuracy-low'
     },
 
     formatDate(isoString) {
@@ -247,6 +401,10 @@ export default {
                 if (data.done) {
                   this.trainingInProgress = false
                   this.modelTrained = true
+                  // Refresh models list
+                  this.loadModelsList()
+                  // Reload status to get latest metadata
+                  this.checkModelStatus()
                   // Final chart update
                   this.$nextTick(() => {
                     if (this.$refs.chartCanvas) {
@@ -764,6 +922,135 @@ export default {
   padding: 20px;
   height: 400px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.models-section {
+  background: #f5f5f5;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 30px;
+}
+
+.models-section h3 {
+  margin: 0 0 20px 0;
+  color: #333;
+  font-size: 18px;
+}
+
+.models-table-container {
+  background: white;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.models-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.models-table thead {
+  background: #42b983;
+  color: white;
+}
+
+.models-table th {
+  padding: 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.models-table tbody tr {
+  border-bottom: 1px solid #e0e0e0;
+  transition: background-color 0.2s;
+}
+
+.models-table tbody tr:hover {
+  background-color: #f9f9f9;
+}
+
+.models-table tbody tr.active-model {
+  background-color: #e8f5e9;
+}
+
+.models-table td {
+  padding: 12px;
+  font-size: 14px;
+  color: #333;
+}
+
+.accuracy-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.accuracy-high {
+  background: #d4edda;
+  color: #155724;
+}
+
+.accuracy-medium {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.accuracy-low {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-badge.active {
+  background: #d4edda;
+  color: #155724;
+}
+
+.status-badge.inactive {
+  background: #e0e0e0;
+  color: #666;
+}
+
+.actions-cell {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-small {
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+.btn-load {
+  background: #42b983;
+  color: white;
+}
+
+.btn-load:hover:not(:disabled) {
+  background: #35a372;
+}
+
+.btn-delete {
+  background: #dc3545;
+  color: white;
+}
+
+.btn-delete:hover:not(:disabled) {
+  background: #c82333;
 }
 
 .error-message {
