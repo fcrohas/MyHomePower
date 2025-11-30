@@ -498,6 +498,11 @@ const loadAndPredict = async () => {
           }
         }
       }
+      
+      // Check if we got a result
+      if (!result) {
+        throw new Error('No result received from prediction endpoint')
+      }
     } else {
       const predictResponse = await fetch(endpoint, {
         method: 'POST',
@@ -535,28 +540,33 @@ const loadAndPredict = async () => {
     modelLoaded.value = true
     loadingProgress.value = 'Processing predictions...'
     
+    // Validate result
+    if (!result || !result.predictions) {
+      throw new Error('Invalid prediction result received from server')
+    }
+    
     // Handle different response formats
-    if (useNewPredictor.value && result.timeRanges) {
-      // New sliding window format with minute-level predictions
-      // Convert time ranges to display format
-      predictions.value = result.timeRanges.map((range) => {
-        const tags = range.tags || []
-        const primaryTag = tags.length > 0 ? tags[0].tag : 'standby'
+    if (false && result.predictions) {
+      // New sliding window format with predictions array
+      // The predictor returns predictions with tags array
+      predictions.value = result.predictions.map((pred) => {
+        const tags = pred.tags || []
+        const primaryTag = tags.length > 0 ? tags[0].tag : (pred.tag || 'standby')
         return {
-          startTime: range.startTime,
-          endTime: range.endTime,
+          startTime: pred.startTime,
+          endTime: pred.endTime,
           tag: primaryTag,
           tags: tags, // All detected tags
-          confidence: range.avgConfidence || (tags.length > 0 ? tags[0].prob : 0),
-          avgPower: range.avgPower || 0,
-          energy: range.energy || 0,
-          standbyEnergy: 0, // Could be calculated if needed
+          confidence: pred.avgConfidence || pred.confidence || (tags.length > 0 ? tags[0].prob : 0),
+          avgPower: pred.avgPower || 0,
+          energy: pred.energy || 0,
+          standbyEnergy: pred.standbyEnergy || 0,
           displayTag: primaryTag === 'standby' ? 'other' : primaryTag,
           color: getTagColor(primaryTag),
-          allProbabilities: tags.map(t => ({ tag: t.tag, probability: t.prob }))
+          allProbabilities: tags.map(t => ({ tag: t.tag, probability: t.prob || t.probability }))
         }
       })
-    } else {
+    } else if (result.predictions) {
       // Legacy format with 10-minute windows
       predictions.value = result.predictions.map((p) => ({
         ...p,

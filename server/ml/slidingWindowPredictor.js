@@ -49,11 +49,11 @@ class SlidingWindowPredictor {
       // The model predicts what's happening in the LAST 10 minutes of the lookback window
       // Lookback: currentTime-50 to currentTime
       // Prediction: currentTime-10 to currentTime (the last 10 min of lookback)
-      const lookbackStart = currentTime - lookbackMs
+      const lookbackStart = currentTime - lookbackMs - this.windowSizeMs
       const lookbackEnd = currentTime
       
-      const predictionWindowStart = currentTime 
-      const predictionWindowEnd = currentTime + this.windowSizeMs
+      const predictionWindowStart = currentTime - this.windowSizeMs
+      const predictionWindowEnd = currentTime
       
       const historyData = sortedData.filter(d => {
         const t = new Date(d.timestamp).getTime()
