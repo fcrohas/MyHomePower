@@ -764,87 +764,204 @@ app.post('/api/ml/predict-day-sliding', async (req, res) => {
       return res.status(400).json({ error: 'Missing date or powerData array' })
     }
 
-    // Load model if not in memory
-    if (!mlModel) {
-      const modelDir = path.join(__dirname, 'ml', 'saved_model')
-      const metadataPath = path.join(modelDir, 'metadata.json')
+    // Check if client wants SSE for progress updates
+    const wantsSSE = req.headers.accept === 'text/event-stream'
+    
+    if (wantsSSE) {
+      // Set up SSE
+      res.setHeader('Content-Type', 'text/event-stream')
+      res.setHeader('Cache-Control', 'no-cache')
+      res.setHeader('Connection', 'keep-alive')
+      res.flushHeaders()
+      
+      const sendProgress = (message) => {
+        res.write(`data: ${JSON.stringify({ type: 'progress', message })}\n\n`)
+      }
+      
+      try {
+        sendProgress('Loading ML model...')
+        
+        // Load model if not in memory
+        if (!mlModel) {
+          const modelDir = path.join(__dirname, 'ml', 'saved_model')
+          const metadataPath = path.join(modelDir, 'metadata.json')
 
-      if (!fs.existsSync(metadataPath)) {
-        return res.status(404).json({ error: 'No trained model found. Please train the model first.' })
+          if (!fs.existsSync(metadataPath)) {
+            res.write(`data: ${JSON.stringify({ type: 'error', message: 'No trained model found. Please train the model first.' })}\n\n`)
+            res.end()
+            return
+          }
+
+          const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+          mlTags = metadata.uniqueTags
+          mlStats = metadata.stats
+
+          mlModel = new PowerTagPredictor()
+          mlModel.setTags(mlTags)
+          await mlModel.load(modelDir)
+
+          sendProgress('ML model loaded successfully')
+        } else {
+          sendProgress('Using cached ML model')
+        }
+
+        sendProgress('Preprocessing power data...')
+
+        // Sort and format power data
+        const sortedData = powerData.map(d => ({
+          timestamp: d.timestamp || d.last_changed || d.last_updated,
+          value: d.value || d.state || d.power
+        })).filter(d => d.timestamp && d.value).sort((a, b) => 
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        )
+
+        if (sortedData.length === 0) {
+          res.write(`data: ${JSON.stringify({ type: 'error', message: 'No valid power data provided' })}\n\n`)
+          res.end()
+          return
+        }
+
+        sendProgress(`Analyzing ${sortedData.length} data points...`)
+
+        // Create sliding window predictor
+        const predictor = new SlidingWindowPredictor(
+          mlModel.model,
+          mlTags,
+          mlStats,
+          stepSize
+        )
+
+        sendProgress(`Running predictions with ${stepSize}-minute step size...`)
+
+        // Make predictions
+        const targetDate = new Date(date)
+        const predictions = await predictor.predictDay(sortedData, targetDate, threshold)
+        
+        sendProgress('Calculating statistics...')
+
+        // Calculate statistics
+        const tagStats = {}
+        let totalEnergy = 0
+        
+        predictions.forEach(pred => {
+          totalEnergy += pred.energy || 0
+          
+          pred.tags.forEach(t => {
+            if (!tagStats[t.tag]) {
+              tagStats[t.tag] = { count: 0, totalProb: 0 }
+            }
+            tagStats[t.tag].count++
+            tagStats[t.tag].totalProb += t.probability
+          })
+        })
+
+        Object.keys(tagStats).forEach(tag => {
+          tagStats[tag].avgProb = tagStats[tag].totalProb / tagStats[tag].count
+        })
+
+        sendProgress('Predictions complete!')
+
+        // Send final result
+        res.write(`data: ${JSON.stringify({
+          type: 'result',
+          data: {
+            date,
+            predictions,
+            totalWindows: predictions.length,
+            tags: mlTags,
+            tagStats,
+            totalEnergy
+          }
+        })}\n\n`)
+        res.end()
+        
+      } catch (error) {
+        res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`)
+        res.end()
+      }
+    } else {
+      // Regular JSON response (backward compatibility)
+      // Load model if not in memory
+      if (!mlModel) {
+        const modelDir = path.join(__dirname, 'ml', 'saved_model')
+        const metadataPath = path.join(modelDir, 'metadata.json')
+
+        if (!fs.existsSync(metadataPath)) {
+          return res.status(404).json({ error: 'No trained model found. Please train the model first.' })
+        }
+
+        const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+        mlTags = metadata.uniqueTags
+        mlStats = metadata.stats
+
+        mlModel = new PowerTagPredictor()
+        mlModel.setTags(mlTags)
+        await mlModel.load(modelDir)
+
+        console.log('✅ ML model loaded from disk')
       }
 
-      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
-      mlTags = metadata.uniqueTags
-      mlStats = metadata.stats
+      console.log(`Making sliding window predictions for ${date} with step size: ${stepSize} minutes`)
 
-      mlModel = new PowerTagPredictor()
-      mlModel.setTags(mlTags)
-      await mlModel.load(modelDir)
+      // Sort and format power data
+      const sortedData = powerData.map(d => ({
+        timestamp: d.timestamp || d.last_changed || d.last_updated,
+        value: d.value || d.state || d.power
+      })).filter(d => d.timestamp && d.value).sort((a, b) => 
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      )
 
-      console.log('✅ ML model loaded from disk')
-    }
+      if (sortedData.length === 0) {
+        return res.status(400).json({ error: 'No valid power data provided' })
+      }
 
-    console.log(`Making sliding window predictions for ${date} with step size: ${stepSize} minutes`)
+      console.log(`Power data info:`)
+      console.log(`  Total points: ${sortedData.length}`)
+      console.log(`  First timestamp: ${sortedData[0].timestamp}`)
+      console.log(`  Last timestamp: ${sortedData[sortedData.length - 1].timestamp}`)
 
-    // Sort and format power data
-    const sortedData = powerData.map(d => ({
-      timestamp: d.timestamp || d.last_changed || d.last_updated,
-      value: d.value || d.state || d.power
-    })).filter(d => d.timestamp && d.value).sort((a, b) => 
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    )
+      // Create sliding window predictor
+      const predictor = new SlidingWindowPredictor(
+        mlModel.model,
+        mlTags,
+        mlStats,
+        stepSize
+      )
 
-    if (sortedData.length === 0) {
-      return res.status(400).json({ error: 'No valid power data provided' })
-    }
-
-    console.log(`Power data info:`)
-    console.log(`  Total points: ${sortedData.length}`)
-    console.log(`  First timestamp: ${sortedData[0].timestamp}`)
-    console.log(`  Last timestamp: ${sortedData[sortedData.length - 1].timestamp}`)
-
-    // Create sliding window predictor
-    const predictor = new SlidingWindowPredictor(
-      mlModel.model,  // Pass the TensorFlow model
-      mlTags,         // Tag names
-      mlStats,        // Normalization stats
-      stepSize        // Step size in minutes
-    )
-
-    // Make predictions
-    const targetDate = new Date(date)
-    const predictions = await predictor.predictDay(sortedData, targetDate, threshold)
-    
-    // Calculate statistics
-    const tagStats = {}
-    let totalEnergy = 0
-    
-    predictions.forEach(pred => {
-      totalEnergy += pred.energy || 0
+      // Make predictions
+      const targetDate = new Date(date)
+      const predictions = await predictor.predictDay(sortedData, targetDate, threshold)
       
-      pred.tags.forEach(t => {
-        if (!tagStats[t.tag]) {
-          tagStats[t.tag] = { count: 0, totalProb: 0 }
-        }
-        tagStats[t.tag].count++
-        tagStats[t.tag].totalProb += t.probability
+      // Calculate statistics
+      const tagStats = {}
+      let totalEnergy = 0
+      
+      predictions.forEach(pred => {
+        totalEnergy += pred.energy || 0
+        
+        pred.tags.forEach(t => {
+          if (!tagStats[t.tag]) {
+            tagStats[t.tag] = { count: 0, totalProb: 0 }
+          }
+          tagStats[t.tag].count++
+          tagStats[t.tag].totalProb += t.probability
+        })
       })
-    })
 
-    // Calculate average probability for each tag
-    Object.keys(tagStats).forEach(tag => {
-      tagStats[tag].avgProb = tagStats[tag].totalProb / tagStats[tag].count
-    })
+      // Calculate average probability for each tag
+      Object.keys(tagStats).forEach(tag => {
+        tagStats[tag].avgProb = tagStats[tag].totalProb / tagStats[tag].count
+      })
 
-    res.json({
-      date,
-      predictions,
-      totalWindows: predictions.length,
-      tags: mlTags,
-      tagStats,
-      totalEnergy
-    })
-
+      res.json({
+        date,
+        predictions,
+        totalWindows: predictions.length,
+        tags: mlTags,
+        tagStats,
+        totalEnergy
+      })
+    }
   } catch (error) {
     console.error('Sliding window prediction error:', error)
     res.status(500).json({

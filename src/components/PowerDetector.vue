@@ -26,13 +26,23 @@
       >
         🔄 Analyze
       </button>
+      <button 
+        @click="showSettingsDialog = true" 
+        class="btn-settings"
+        title="Advanced Settings"
+      >
+        ⚙️ Settings
+      </button>
     </div>
 
-    <!-- Configuration Section -->
-    <div class="config-section">
-      <details>
-        <summary>⚙️ Advanced Settings</summary>
-        <div class="config-content">
+    <!-- Settings Dialog -->
+    <div v-if="showSettingsDialog" class="dialog-overlay" @click.self="showSettingsDialog = false">
+      <div class="dialog-content">
+        <div class="dialog-header">
+          <h3>⚙️ Advanced Settings</h3>
+          <button class="close-btn" @click="showSettingsDialog = false">✕</button>
+        </div>
+        <div class="dialog-body">
           <div class="config-item">
             <label for="stepSize">Sliding Window Step Size (minutes):</label>
             <select id="stepSize" v-model.number="stepSize">
@@ -63,7 +73,10 @@
             </label>
           </div>
         </div>
-      </details>
+        <div class="dialog-footer">
+          <button @click="showSettingsDialog = false" class="btn-close">Close</button>
+        </div>
+      </div>
     </div>
 
     <!-- Status Messages -->
@@ -77,7 +90,7 @@
 
     <div v-if="loading" class="loading">
       <div class="spinner"></div>
-      Analyzing power consumption patterns...
+      {{ loadingProgress }}
     </div>
 
     <div v-if="error" class="error-message">
@@ -213,6 +226,7 @@ const props = defineProps({
 // State
 const selectedDate = ref(format(new Date(), 'yyyy-MM-dd'))
 const loading = ref(false)
+const loadingProgress = ref('')
 const modelLoaded = ref(false)
 const error = ref('')
 const predictions = ref([])
@@ -222,6 +236,7 @@ const pieChart = ref(null)
 const powerChartCanvas = ref(null)
 const pieChartCanvas = ref(null)
 const showDetailedPredictions = ref(false)
+const showSettingsDialog = ref(false)
 
 // Configuration
 const stepSize = ref(5) // Default 5 minutes
@@ -343,6 +358,7 @@ const loadAndPredict = async () => {
   predictions.value = []
   powerData.value = []
   loading.value = true
+  loadingProgress.value = 'Initializing analysis...'
   error.value = ''
 
   try {
@@ -350,11 +366,13 @@ const loadAndPredict = async () => {
     if (!props.sessionId) {
       error.value = 'No active session. Please reconnect to Home Assistant.'
       loading.value = false
+      loadingProgress.value = ''
       modelLoaded.value = false
       return
     }
 
     // Fetch power data for the selected date
+    loadingProgress.value = 'Fetching power data from Home Assistant...'
     // Need to start 50 minutes before midnight (23:10 previous day) to have enough 
     // lookback data for predicting from 00:00 (5 windows x 10 minutes = 50 minutes)
     const startDate = new Date(`${selectedDate.value}T00:00:00`)
@@ -392,8 +410,11 @@ const loadAndPredict = async () => {
     if (powerData.value.length === 0) {
       error.value = 'No power data available for this date'
       loading.value = false
+      loadingProgress.value = ''
       return
     }
+
+    loadingProgress.value = `Processing ${powerData.value.length} power readings...`
 
     // Call the prediction endpoint with sliding window
     const endpoint = useNewPredictor.value 
@@ -412,40 +433,107 @@ const loadAndPredict = async () => {
           powerData: powerData.value
         }
 
-    const predictResponse = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    })
+    loadingProgress.value = useNewPredictor.value 
+      ? `Running ML predictions (${stepSize.value} min steps)...`
+      : 'Running ML predictions...'
 
-    if (!predictResponse.ok) {
-      const errorText = await predictResponse.text()
-      let errorData
-      try {
-        errorData = JSON.parse(errorText)
-        if (predictResponse.status === 404) {
-          modelLoaded.value = false
-          throw new Error('No trained model found. Please train the model first in the ML Trainer tab.')
-        }
-        throw new Error(errorData.message || errorData.error || 'Prediction failed')
-      } catch (e) {
-        if (e.message.includes('No trained model')) {
-          throw e
-        }
-        throw new Error(`Prediction failed: ${predictResponse.status}`)
-      }
-    }
-
-    const resultText = await predictResponse.text()
     let result
-    try {
-      result = JSON.parse(resultText)
-    } catch (e) {
-      throw new Error('Invalid response from prediction endpoint')
+    
+    // Use fetch with streaming for real-time progress if using new predictor
+    if (useNewPredictor.value) {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream'
+        },
+        body: JSON.stringify(requestBody)
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        let errorData
+        try {
+          errorData = JSON.parse(errorText)
+          if (response.status === 404) {
+            modelLoaded.value = false
+            throw new Error('No trained model found. Please train the model first in the ML Trainer tab.')
+          }
+          throw new Error(errorData.message || errorData.error || 'Prediction failed')
+        } catch (e) {
+          if (e.message.includes('No trained model')) {
+            throw e
+          }
+          throw new Error(`Prediction failed: ${response.status}`)
+        }
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.substring(6))
+              
+              if (data.type === 'progress') {
+                loadingProgress.value = data.message
+              } else if (data.type === 'error') {
+                throw new Error(data.message)
+              } else if (data.type === 'result') {
+                result = data.data
+              }
+            } catch (e) {
+              console.error('Error parsing SSE data:', e)
+            }
+          }
+        }
+      }
+    } else {
+      const predictResponse = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      })
+
+      if (!predictResponse.ok) {
+        const errorText = await predictResponse.text()
+        let errorData
+        try {
+          errorData = JSON.parse(errorText)
+          if (predictResponse.status === 404) {
+            modelLoaded.value = false
+            throw new Error('No trained model found. Please train the model first in the ML Trainer tab.')
+          }
+          throw new Error(errorData.message || errorData.error || 'Prediction failed')
+        } catch (e) {
+          if (e.message.includes('No trained model')) {
+            throw e
+          }
+          throw new Error(`Prediction failed: ${predictResponse.status}`)
+        }
+      }
+
+      const resultText = await predictResponse.text()
+      try {
+        result = JSON.parse(resultText)
+      } catch (e) {
+        throw new Error('Invalid response from prediction endpoint')
+      }
     }
     
     // Model is loaded if we got here successfully
     modelLoaded.value = true
+    loadingProgress.value = 'Processing predictions...'
     
     // Handle different response formats
     if (useNewPredictor.value && result.timeRanges) {
@@ -478,6 +566,7 @@ const loadAndPredict = async () => {
     }
 
     // Render charts
+    loadingProgress.value = 'Rendering visualizations...'
     await nextTick()
     console.log('Rendering charts...')
     console.log('powerChartCanvas:', powerChartCanvas.value)
@@ -497,6 +586,7 @@ const loadAndPredict = async () => {
     error.value = err.message
   } finally {
     loading.value = false
+    loadingProgress.value = ''
   }
 }
 
@@ -702,16 +792,13 @@ const renderPieChart = () => {
 
 // Lifecycle
 onMounted(() => {
-  // Only load if we have a sessionId
-  if (props.sessionId) {
-    loadAndPredict()
-  }
+  // Don't auto-load on mount - wait for user to click Analyze button
 })
 
-// Watch for sessionId changes
+// Watch for sessionId changes - don't auto-analyze, just clear any error state
 watch(() => props.sessionId, (newSessionId) => {
-  if (newSessionId) {
-    loadAndPredict()
+  if (newSessionId && error.value.includes('session')) {
+    error.value = ''
   }
 })
 
@@ -748,50 +835,106 @@ onUnmounted(() => {
   font-size: 0.95rem;
 }
 
-.config-section {
-  margin-bottom: 1rem;
+.dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.dialog-content {
   background: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-  padding: 1rem;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  max-width: 600px;
+  width: 90%;
+  max-height: 80vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-.config-section summary {
-  cursor: pointer;
-  font-weight: 600;
+.dialog-header {
+  padding: 1.5rem;
+  border-bottom: 1px solid #ecf0f1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dialog-header h3 {
+  margin: 0;
   color: #2c3e50;
-  padding: 0.5rem;
-  user-select: none;
+  font-size: 1.25rem;
 }
 
-.config-section summary:hover {
-  color: #3498db;
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: #95a5a6;
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s;
 }
 
-.config-content {
-  margin-top: 1rem;
-  padding-top: 1rem;
+.close-btn:hover {
+  background: #ecf0f1;
+  color: #2c3e50;
+}
+
+.dialog-body {
+  padding: 1.5rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.dialog-footer {
+  padding: 1rem 1.5rem;
   border-top: 1px solid #ecf0f1;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn-close {
+  padding: 0.5rem 1.5rem;
+  background: #5b9bd5;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.btn-close:hover {
+  background: #4a8bc2;
+  transform: translateY(-1px);
 }
 
 .config-item {
-  margin-bottom: 1rem;
+  margin-bottom: 1.5rem;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 0.5rem;
-  flex-wrap: wrap;
 }
 
 .config-item label {
-  min-width: 200px;
   font-weight: 500;
   color: #555;
-}
-
-.config-item select,
-.config-item input[type="range"] {
-  flex: 1;
-  max-width: 300px;
 }
 
 .config-item select {
@@ -804,28 +947,27 @@ onUnmounted(() => {
 }
 
 .config-item input[type="range"] {
-  margin: 0 0.5rem;
+  width: 100%;
 }
 
 .config-value {
-  min-width: 50px;
   font-weight: 600;
   color: #3498db;
+  margin-left: 0.5rem;
 }
 
 .config-hint {
   font-size: 0.85rem;
   color: #95a5a6;
   font-style: italic;
-  margin-left: 0.5rem;
 }
 
 .config-item.checkbox {
-  margin-top: 0.5rem;
+  flex-direction: row;
+  align-items: center;
 }
 
 .config-item.checkbox label {
-  min-width: auto;
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -867,7 +1009,7 @@ onUnmounted(() => {
   color: #2c3e50;
 }
 
-.nav-btn, .btn-analyze {
+.nav-btn, .btn-analyze, .btn-settings {
   padding: 0.5rem 1rem;
   border: none;
   border-radius: 6px;
@@ -900,6 +1042,16 @@ onUnmounted(() => {
 .btn-analyze:disabled {
   background: #ccc;
   cursor: not-allowed;
+}
+
+.btn-settings {
+  background: #95a5a6;
+  color: white;
+}
+
+.btn-settings:hover {
+  background: #7f8c8d;
+  transform: translateY(-1px);
 }
 
 .status-warning {
