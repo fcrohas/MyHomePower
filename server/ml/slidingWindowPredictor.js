@@ -25,10 +25,14 @@ class SlidingWindowPredictor {
   async predictDay(sortedData, targetDate, threshold = 0.3) {
     const predictions = []
     
+    // Store sortedData for later use in merge
+    this.sortedData = sortedData
+    
     // Calculate day boundaries in UTC to match data timestamps
     // const targetDate = new Date(date)
     const dayStartTime = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate()).getTime()
     const dayEndTime = dayStartTime + (24 * 60 * 60 * 1000)
+    this.dayStartTime = dayStartTime
     
     // Step size in milliseconds
     const stepSizeMs = this.stepSizeMinutes * 60 * 1000
@@ -143,7 +147,156 @@ class SlidingWindowPredictor {
     }
     
     console.log(`✅ Generated ${predictions.length} predictions`)
-    return predictions
+    
+    // Merge overlapping predictions
+    const merged = this.mergeOverlappingPredictions(predictions)
+    console.log(`✅ After merging: ${merged.length} predictions`)
+    
+    return merged
+  }
+  
+  /**
+   * Merge overlapping time range predictions
+   * Splits overlapping 10-min windows into non-overlapping segments
+   * and merges predictions for each segment
+   */
+  mergeOverlappingPredictions(predictions) {
+    if (predictions.length === 0) return predictions
+    
+    // Sort predictions by start time to ensure proper ordering
+    predictions.sort((a, b) => this.timeToMinutes(a.startTime) - this.timeToMinutes(b.startTime))
+    
+    // Collect all unique time boundaries
+    const timePoints = new Set()
+    predictions.forEach(p => {
+      timePoints.add(this.timeToMinutes(p.startTime))
+      timePoints.add(this.timeToMinutes(p.endTime))
+    })
+    
+    // Convert to sorted array
+    const sortedTimes = Array.from(timePoints).sort((a, b) => a - b)
+    
+    // Create non-overlapping segments
+    const segments = []
+    for (let i = 0; i < sortedTimes.length - 1; i++) {
+      const segmentStart = sortedTimes[i]
+      const segmentEnd = sortedTimes[i + 1]
+      
+      // Find all predictions that cover this segment
+      const coveringPredictions = predictions.filter(p => {
+        const pStart = this.timeToMinutes(p.startTime)
+        const pEnd = this.timeToMinutes(p.endTime)
+        return pStart <= segmentStart && pEnd >= segmentEnd
+      })
+      
+      if (coveringPredictions.length > 0) {
+        // Merge all predictions covering this segment
+        const merged = this.mergePredictionData(coveringPredictions)
+        
+        // Calculate actual power and energy from measured data for this segment
+        const segmentStartMs = this.dayStartTime + (segmentStart * 60 * 1000)
+        const segmentEndMs = this.dayStartTime + (segmentEnd * 60 * 1000)
+        
+        const segmentData = this.sortedData.filter(d => {
+          const t = new Date(d.timestamp).getTime()
+          return t >= segmentStartMs && t < segmentEndMs
+        })
+        
+        let avgPower = 0
+        let energy = 0
+        if (segmentData.length > 0) {
+          const powers = segmentData.map(d => parseFloat(d.value))
+          avgPower = powers.reduce((sum, p) => sum + p, 0) / powers.length
+          const durationHours = (segmentEnd - segmentStart) / 60 // Convert minutes to hours
+          energy = avgPower * durationHours
+        }
+        
+        segments.push({
+          startTime: this.minutesToTime(segmentStart),
+          endTime: this.minutesToTime(segmentEnd),
+          ...merged,
+          avgPower: avgPower,
+          energy: energy
+        })
+      }
+    }
+    
+    return segments
+  }
+  
+  /**
+   * Merge prediction data (tags, confidence) from multiple predictions
+   */
+  mergePredictionData(predictions) {
+    // Average confidence
+    const avgConfidence = predictions.reduce((sum, p) => sum + p.confidence, 0) / predictions.length
+    
+    // Merge tags - average probabilities across all predictions
+    const tagMap = new Map()
+    predictions.forEach(pred => {
+      pred.tags.forEach(t => {
+        if (tagMap.has(t.tag)) {
+          tagMap.set(t.tag, tagMap.get(t.tag) + t.probability)
+        } else {
+          tagMap.set(t.tag, t.probability)
+        }
+      })
+    })
+    
+    // Average the probabilities
+    tagMap.forEach((sum, tag) => {
+      tagMap.set(tag, sum / predictions.length)
+    })
+    
+    // Convert to array and sort
+    const mergedTags = Array.from(tagMap.entries())
+      .map(([tag, probability]) => ({ tag, probability }))
+      .sort((a, b) => b.probability - a.probability)
+    
+    // Merge allProbabilities similarly
+    const allProbMap = new Map()
+    predictions.forEach(pred => {
+      pred.allProbabilities.forEach(t => {
+        if (allProbMap.has(t.tag)) {
+          allProbMap.set(t.tag, allProbMap.get(t.tag) + t.probability)
+        } else {
+          allProbMap.set(t.tag, t.probability)
+        }
+      })
+    })
+    
+    // Average the probabilities
+    allProbMap.forEach((sum, tag) => {
+      allProbMap.set(tag, sum / predictions.length)
+    })
+    
+    const allProbabilities = Array.from(allProbMap.entries())
+      .map(([tag, probability]) => ({ tag, probability }))
+      .sort((a, b) => b.probability - a.probability)
+    
+    return {
+      tag: mergedTags.length > 0 ? mergedTags[0].tag : 'unknown',
+      tags: mergedTags,
+      confidence: mergedTags.length > 0 ? mergedTags[0].probability : avgConfidence,
+      allProbabilities: allProbabilities
+    }
+  }
+  
+  /**
+   * Convert minutes since midnight to HH:MM time string
+   */
+  minutesToTime(minutes) {
+    const hours = Math.floor(minutes / 60)
+    const mins = minutes % 60
+    return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`
+  }
+  
+  /**
+   * Convert HH:MM time string to minutes since midnight
+   */
+  timeToMinutes(timeStr) {
+    const [hours, minutes] = timeStr.split(':').map(Number)
+    return hours * 60 + minutes
   }
   
   /**
