@@ -172,15 +172,16 @@
               <tr v-for="(pred, idx) in predictions" :key="idx">
                 <td>{{ pred.startTime }} - {{ pred.endTime }}</td>
                 <td>
-                  <div v-if="pred.tags && pred.tags.length > 1" class="multi-tags">
+                  <div v-if="pred.tags && pred.tags.length > 0" class="multi-tags">
                     <span 
                       v-for="(tagInfo, tidx) in pred.tags" 
                       :key="tidx"
-                      class="tag-badge" 
+                      class="tag-badge with-probability" 
                       :style="{ backgroundColor: getTagColor(tagInfo.tag) }"
-                      :title="`${(tagInfo.prob * 100).toFixed(1)}%`"
+                      :title="`${tagInfo.probability ? (tagInfo.probability * 100).toFixed(1) : '0.0'}%`"
                     >
-                      {{ tagInfo.tag === 'standby' ? 'other' : tagInfo.tag }}
+                      <span class="tag-name">{{ tagInfo.tag === 'standby' ? 'other' : tagInfo.tag }}</span>
+                      <span class="tag-probability">{{ tagInfo.probability ? (tagInfo.probability * 100).toFixed(1) : '0.0' }}%</span>
                     </span>
                   </div>
                   <span 
@@ -546,6 +547,11 @@ const loadAndPredict = async () => {
     }
     
     // Handle different response formats
+    console.log('===== PREDICTION RESULT DEBUG =====')
+    console.log('Full result:', JSON.stringify(result, null, 2))
+    console.log('First prediction sample:', result.predictions?.[0])
+    console.log('useNewPredictor:', useNewPredictor.value)
+    
     if (false && result.predictions) {
       // New sliding window format with predictions array
       // The predictor returns predictions with tags array
@@ -568,12 +574,18 @@ const loadAndPredict = async () => {
       })
     } else if (result.predictions) {
       // Legacy format with 10-minute windows
-      predictions.value = result.predictions.map((p) => ({
-        ...p,
-        displayTag: p.tag === 'standby' ? 'other' : p.tag,
-        color: getTagColor(p.tag)
-      }))
+      predictions.value = result.predictions.map((p) => {
+        console.log('Processing prediction:', p)
+        return {
+          ...p,
+          displayTag: p.tag === 'standby' ? 'other' : p.tag,
+          color: getTagColor(p.tag)
+        }
+      })
+      console.log('Processed predictions sample:', predictions.value[0])
     }
+    console.log('===== END DEBUG =====')
+    
 
     // Render charts
     loadingProgress.value = 'Rendering visualizations...'
@@ -1251,6 +1263,26 @@ tbody tr:hover {
   font-size: 0.85rem;
   font-weight: 600;
   margin: 0.125rem;
+}
+
+.tag-badge.with-probability {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.75rem;
+}
+
+.tag-name {
+  font-weight: 600;
+}
+
+.tag-probability {
+  font-size: 0.75rem;
+  opacity: 0.9;
+  background: rgba(0, 0, 0, 0.15);
+  padding: 0.125rem 0.375rem;
+  border-radius: 8px;
+  font-weight: 500;
 }
 
 .multi-tags {

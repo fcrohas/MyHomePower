@@ -866,8 +866,21 @@ app.post('/api/ml/predict-day-sliding', async (req, res) => {
     }
 
     // Adjust energy calculations: subtract standby from appliance consumption
+    // Also filter tags based on threshold
     const adjustedPredictions = predictions.map(p => {
       const isStandby = p.tag === 'standby' || (p.tags && p.tags.some(t => t.tag === 'standby'))
+      
+      // Filter allProbabilities based on threshold and convert to tags format
+      let filteredTags = []
+      if (p.allProbabilities && Array.isArray(p.allProbabilities)) {
+        filteredTags = p.allProbabilities
+          .filter(prob => prob.probability >= threshold)
+          .map(prob => ({
+            tag: prob.tag,
+            probability: prob.probability,
+            prob: prob.probability // Keep both for compatibility
+          }))
+      }
       
       if (!isStandby && standbyBaseline > 0) {
         // Keep original avgPower (total consumption)
@@ -877,6 +890,7 @@ app.post('/api/ml/predict-day-sliding', async (req, res) => {
         const standbyEnergy = standbyBaseline * (stepSize / 60) // Standby energy for this window
         return {
           ...p,
+          tags: filteredTags, // Filtered tags based on threshold
           energy: applianceEnergy, // This is the appliance consumption only
           standbyEnergy: standbyEnergy, // Standby consumption for this window
           totalEnergy: p.energy, // Original total energy
@@ -884,7 +898,10 @@ app.post('/api/ml/predict-day-sliding', async (req, res) => {
           standbyBaseline: standbyBaseline
         }
       }
-      return p
+      return {
+        ...p,
+        tags: filteredTags // Filtered tags based on threshold
+      }
     })
     
     // Calculate statistics
