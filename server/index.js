@@ -846,16 +846,18 @@ app.post('/api/ml/predict-day-sliding', async (req, res) => {
     
     sendProgress('Calculating energy statistics...')
     
-    // Calculate standby baseline power from windows tagged as "standby" only
-    const standbyWindows = predictions.filter(p => {
-      // Check if primary tag is standby or if standby is in the tags array
-      return p.tag === 'standby' || (p.tags && p.tags.some(t => t.tag === 'standby'))
-    })
+    // Calculate standby baseline power as minimum power of the day
     let standbyBaseline = 0
-    if (standbyWindows.length > 0) {
-      const totalStandbyPower = standbyWindows.reduce((sum, p) => sum + p.avgPower, 0)
-      standbyBaseline = totalStandbyPower / standbyWindows.length
-      console.log(`📊 Calculated standby baseline: ${standbyBaseline.toFixed(2)} W from ${standbyWindows.length} windows`)
+    if (predictions.length > 0) {
+      // Filter out zero/invalid values and get minimum
+      const validPowers = predictions
+        .map(p => p.avgPower)
+        .filter(p => p != null && p > 0)
+      
+      if (validPowers.length > 0) {
+        standbyBaseline = Math.min(...validPowers)
+        console.log(`📊 Calculated standby baseline: ${standbyBaseline.toFixed(2)} W (minimum power of day from ${validPowers.length} windows)`)
+      }
     }
 
     // Adjust energy calculations: subtract standby from appliance consumption
@@ -1146,13 +1148,18 @@ app.post('/api/ml/predict-day', async (req, res) => {
     console.log(`✅ Generated ${predictions.length} predictions for ${date}`)
     console.log(`Total windows processed: ${totalWindows}, Skipped (insufficient data): ${skippedWindows}`)
 
-    // Calculate standby baseline power from windows tagged as "standby" only
-    const standbyWindows = predictions.filter(p => p.tag === 'standby')
+    // Calculate standby baseline power as minimum power of the day
     let standbyBaseline = 0
-    if (standbyWindows.length > 0) {
-      const totalStandbyPower = standbyWindows.reduce((sum, p) => sum + p.avgPower, 0)
-      standbyBaseline = totalStandbyPower / standbyWindows.length
-      console.log(`📊 Calculated standby baseline: ${standbyBaseline.toFixed(2)} W from ${standbyWindows.length} windows`)
+    if (predictions.length > 0) {
+      // Filter out zero/invalid values and get minimum
+      const validPowers = predictions
+        .map(p => p.avgPower)
+        .filter(p => p != null && p > 0)
+      
+      if (validPowers.length > 0) {
+        standbyBaseline = Math.min(...validPowers)
+        console.log(`📊 Calculated standby baseline: ${standbyBaseline.toFixed(2)} W (minimum power of day from ${validPowers.length} windows)`)
+      }
     }
 
     // Adjust energy calculations: subtract standby from appliance consumption but keep total power
