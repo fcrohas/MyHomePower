@@ -8,6 +8,7 @@ import { dirname } from 'path'
 import * as tf from '@tensorflow/tfjs-node'
 import { PowerTagPredictor } from './ml/model.js'
 import { SlidingWindowPredictor } from './ml/slidingWindowPredictor.js'
+import { PowerAutoencoder } from './ml/autoencoder.js'
 import { loadAllData, prepareTrainingData, createTensors, preparePredictionInput } from './ml/dataPreprocessing.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -34,6 +35,10 @@ let trainingInProgress = false
 let trainingHistory = []
 let trainingMetadata = null
 let currentModelId = null
+
+// Autoencoder for anomaly detection
+let autoencoderModels = new Map() // Map of tag -> autoencoder model
+let autoencoderTraining = new Map() // Map of tag -> training status
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -1194,6 +1199,516 @@ app.post('/api/ml/predict-day', async (req, res) => {
     console.error('Day prediction error:', error)
     res.status(500).json({
       error: 'Failed to make predictions',
+      message: error.message
+    })
+  }
+})
+
+// ============================================
+// Anomaly Detection Endpoints
+// ============================================
+
+// Get available tags from predictions for anomaly detection
+app.get('/api/anomaly/tags', (req, res) => {
+  try {
+    res.json({
+      tags: mlTags,
+      availableModels: Array.from(autoencoderModels.keys())
+    })
+  } catch (error) {
+    console.error('Error fetching tags:', error)
+    res.status(500).json({ error: 'Failed to fetch tags', message: error.message })
+  }
+})
+
+// Get predictions for a specific tag on a given date
+app.post('/api/anomaly/tag-predictions', async (req, res) => {
+  const { sessionId, date, tag, entityId } = req.body
+
+  if (!sessionId || !date || !tag) {
+    return res.status(400).json({ error: 'Missing sessionId, date, or tag' })
+  }
+
+  try {
+    const connection = haConnections.get(sessionId)
+    if (!connection) {
+      return res.status(401).json({ error: 'Invalid session' })
+    }
+
+    // Load model if not in memory
+    if (!mlModel || !mlStats || mlTags.length === 0) {
+      const modelDir = path.join(__dirname, 'ml', 'saved_model')
+      const metadataPath = path.join(modelDir, 'metadata.json')
+
+      if (!fs.existsSync(metadataPath)) {
+        return res.status(400).json({ 
+          error: 'No trained model available',
+          message: 'Please train a model first in the ML Trainer tab'
+        })
+      }
+
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+      mlTags = metadata.uniqueTags
+      mlStats = metadata.stats
+
+      mlModel = new PowerTagPredictor()
+      mlModel.setTags(mlTags)
+      await mlModel.load(modelDir)
+
+      console.log('✅ ML model loaded from disk for tag predictions')
+    }
+
+    console.log(`🔍 Fetching predictions for tag "${tag}" on ${date}`)
+
+    // Parse date
+    const targetDate = new Date(date)
+    const dayStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate())
+    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000)
+
+    // Fetch power data for the day
+    const historyUrl = `${connection.url}/api/history/period/${dayStart.toISOString()}`
+    const params = new URLSearchParams({
+      filter_entity_id: entityId || connection.entityId,
+      end_time: dayEnd.toISOString(),
+      minimal_response: 'true',
+      no_attributes: 'true'
+    })
+
+    const response = await fetch(`${historyUrl}?${params}`, {
+      headers: {
+        'Authorization': `Bearer ${connection.token}`,
+        'Content-Type': 'application/json'
+      }
+    })
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch history: ${response.status}`)
+    }
+
+    const history = await response.json()
+    
+    if (!history[0] || history[0].length === 0) {
+      return res.json({ tag, date, windows: [], message: 'No data available for this date' })
+    }
+
+    // Convert history to sorted data
+    const sortedData = history[0]
+      .filter(state => state.state !== 'unavailable' && state.state !== 'unknown')
+      .map(state => ({
+        timestamp: new Date(state.last_changed).getTime(),
+        value: parseFloat(state.state)
+      }))
+      .filter(d => !isNaN(d.value))
+      .sort((a, b) => a.timestamp - b.timestamp)
+
+    // Use sliding window predictor for consistent predictions
+    const slidingPredictor = new SlidingWindowPredictor(mlModel.model, mlTags, mlStats, 10)
+    const predictions = await slidingPredictor.predictDay(sortedData, targetDate, 0.3)
+
+    // Filter predictions for the selected tag
+    const tagPredictions = predictions.filter(p => 
+      p.tag === tag || (p.activeTags && p.activeTags.includes(tag))
+    )
+
+    // Extract power curves for each prediction window
+    const windows = tagPredictions.map(pred => {
+      // Convert time strings to timestamps
+      const [startHour, startMin] = pred.startTime.split(':').map(Number)
+      const [endHour, endMin] = pred.endTime.split(':').map(Number)
+      
+      const startTimestamp = new Date(dayStart.getTime() + startHour * 60 * 60 * 1000 + startMin * 60 * 1000).getTime()
+      const endTimestamp = new Date(dayStart.getTime() + endHour * 60 * 60 * 1000 + endMin * 60 * 1000).getTime()
+      
+      const windowData = sortedData.filter(d => 
+        d.timestamp >= startTimestamp && d.timestamp < endTimestamp
+      )
+      
+      return {
+        startTime: startTimestamp,
+        endTime: endTimestamp,
+        startTimeStr: pred.startTime,
+        endTimeStr: pred.endTime,
+        powerCurve: windowData.map(d => d.value),
+        timestamps: windowData.map(d => d.timestamp),
+        avgPower: pred.avgPower,
+        probability: pred.probability,
+        activeTags: pred.activeTags || [pred.tag]
+      }
+    })
+
+    console.log(`✅ Found ${windows.length} windows for tag "${tag}"`)
+
+    res.json({
+      tag,
+      date,
+      windows,
+      totalWindows: windows.length
+    })
+
+  } catch (error) {
+    console.error('Tag prediction error:', error)
+    res.status(500).json({
+      error: 'Failed to get tag predictions',
+      message: error.message
+    })
+  }
+})
+
+// Train autoencoder for a specific tag
+app.post('/api/anomaly/train', async (req, res) => {
+  const { tag, sessionId, trainingDates, entityId } = req.body
+
+  if (!tag || !sessionId) {
+    return res.status(400).json({ error: 'Missing tag or sessionId' })
+  }
+
+  if (autoencoderTraining.get(tag)) {
+    return res.status(400).json({ error: `Training already in progress for tag: ${tag}` })
+  }
+
+  try {
+    autoencoderTraining.set(tag, { status: 'training', progress: 0 })
+
+    const connection = haConnections.get(sessionId)
+    if (!connection) {
+      autoencoderTraining.delete(tag)
+      return res.status(401).json({ error: 'Invalid session' })
+    }
+
+    // Load model if not in memory
+    if (!mlModel || !mlStats || mlTags.length === 0) {
+      const modelDir = path.join(__dirname, 'ml', 'saved_model')
+      const metadataPath = path.join(modelDir, 'metadata.json')
+
+      if (!fs.existsSync(metadataPath)) {
+        autoencoderTraining.delete(tag)
+        return res.status(400).json({ 
+          error: 'No trained model available',
+          message: 'Please train a model first in the ML Trainer tab'
+        })
+      }
+
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+      mlTags = metadata.uniqueTags
+      mlStats = metadata.stats
+
+      mlModel = new PowerTagPredictor()
+      mlModel.setTags(mlTags)
+      await mlModel.load(modelDir)
+
+      console.log('✅ ML model loaded from disk for autoencoder training')
+    }
+
+    console.log(`🧠 Starting autoencoder training for tag: ${tag}`)
+    console.log(`Training dates provided: ${JSON.stringify(trainingDates)}`)
+
+    // Collect power curves from training dates
+    const powerCurves = []
+
+    for (const dateStr of trainingDates || []) {
+      try {
+        console.log(`\n📅 Processing date: ${dateStr}`)
+        const targetDate = new Date(dateStr)
+        const dayStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate())
+        const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000)
+
+        console.log(`  Date range: ${dayStart.toISOString()} to ${dayEnd.toISOString()}`)
+
+        // Fetch power data
+        const historyUrl = `${connection.url}/api/history/period/${dayStart.toISOString()}`
+        const params = new URLSearchParams({
+          filter_entity_id: entityId || connection.entityId,
+          end_time: dayEnd.toISOString(),
+          minimal_response: 'true',
+          no_attributes: 'true'
+        })
+
+        console.log(`  Fetching history for entity: ${entityId || connection.entityId}`)
+        const response = await fetch(`${historyUrl}?${params}`, {
+          headers: {
+            'Authorization': `Bearer ${connection.token}`,
+            'Content-Type': 'application/json'
+          }
+        })
+
+        if (!response.ok) {
+          console.warn(`  ❌ HTTP error: ${response.status}`)
+          continue
+        }
+
+        const history = await response.json()
+        console.log(`  Received history with ${history.length} entity groups`)
+        
+        if (!history[0] || history[0].length === 0) {
+          console.warn(`  ❌ No history data for this date`)
+          continue
+        }
+
+        console.log(`  Raw history points: ${history[0].length}`)
+
+        const sortedData = history[0]
+          .filter(state => state.state !== 'unavailable' && state.state !== 'unknown')
+          .map(state => ({
+            timestamp: new Date(state.last_changed).getTime(),
+            value: parseFloat(state.state)
+          }))
+          .filter(d => !isNaN(d.value))
+          .sort((a, b) => a.timestamp - b.timestamp)
+
+        console.log(`  Valid data points after filtering: ${sortedData.length}`)
+
+        // Get predictions for this tag
+        console.log(`  Running sliding window predictions...`)
+        const slidingPredictor = new SlidingWindowPredictor(mlModel.model, mlTags, mlStats, 10)
+        const predictions = await slidingPredictor.predictDay(sortedData, targetDate, 0.3)
+        
+        console.log(`  Total predictions: ${predictions.length}`)
+        console.log(`  All predicted tags in this day:`, [...new Set(predictions.map(p => p.tag))])
+        
+        const tagPredictions = predictions.filter(p => 
+          p.tag === tag || (p.activeTags && p.activeTags.includes(tag))
+        )
+
+        console.log(`  Predictions matching tag "${tag}": ${tagPredictions.length}`)
+
+        // Extract power curves
+        let curvesFromThisDate = 0
+        for (const pred of tagPredictions) {
+          try {
+            // pred.startTime and pred.endTime are time strings like "00:20"
+            // Convert them to timestamps for the specific date
+            const [startHour, startMin] = pred.startTime.split(':').map(Number)
+            const [endHour, endMin] = pred.endTime.split(':').map(Number)
+            
+            const startTimestamp = new Date(dayStart.getTime() + startHour * 60 * 60 * 1000 + startMin * 60 * 1000).getTime()
+            const endTimestamp = new Date(dayStart.getTime() + endHour * 60 * 60 * 1000 + endMin * 60 * 1000).getTime()
+            
+            const windowData = sortedData.filter(d => 
+              d.timestamp >= startTimestamp && d.timestamp < endTimestamp
+            )
+            
+            // Get probability for this specific tag
+            let probStr = 'N/A'
+            if (pred.tags && Array.isArray(pred.tags)) {
+              const tagInfo = pred.tags.find(t => t.tag === tag)
+              if (tagInfo && tagInfo.probability) {
+                probStr = tagInfo.probability.toFixed(3)
+              }
+            } else if (pred.confidence) {
+              probStr = pred.confidence.toFixed(3)
+            }
+            
+            console.log(`    Window ${pred.startTime}-${pred.endTime}: ${windowData.length} points, probability: ${probStr}`)
+            
+            if (windowData.length > 30) { // Ensure sufficient data
+              powerCurves.push(windowData.map(d => d.value))
+              curvesFromThisDate++
+            } else {
+              console.log(`      ⚠️ Skipped (insufficient points: ${windowData.length})`)
+            }
+          } catch (err) {
+            console.error(`      ❌ Error processing window:`, err.message)
+          }
+        }
+
+        console.log(`  ✅ Collected ${curvesFromThisDate} curves from ${dateStr}`)
+      } catch (err) {
+        console.error(`  ❌ Failed to process date ${dateStr}:`, err.message)
+        console.error(err.stack)
+      }
+    }
+
+    console.log(`\n📊 Total power curves collected: ${powerCurves.length}`)
+
+    if (powerCurves.length < 5) {
+      autoencoderTraining.delete(tag)
+      return res.status(400).json({ 
+        error: 'Insufficient training data',
+        message: `Found only ${powerCurves.length} power curves, need at least 5`
+      })
+    }
+
+    console.log(`📊 Training autoencoder with ${powerCurves.length} power curves`)
+
+    // Create and train autoencoder
+    const autoencoder = new PowerAutoencoder(60, 8) // 60-point sequences, 8-dim latent space
+    
+    await autoencoder.train(powerCurves, {
+      epochs: 50,
+      batchSize: 16,
+      validationSplit: 0.2,
+      callbacks: []
+    })
+
+    // Save model
+    autoencoderModels.set(tag, autoencoder)
+    autoencoderTraining.delete(tag)
+
+    console.log(`✅ Autoencoder training complete for tag: ${tag}`)
+
+    res.json({
+      success: true,
+      tag,
+      trainingSamples: powerCurves.length,
+      message: `Autoencoder trained successfully with ${powerCurves.length} samples`
+    })
+
+  } catch (error) {
+    console.error('Autoencoder training error:', error)
+    autoencoderTraining.delete(tag)
+    res.status(500).json({
+      error: 'Failed to train autoencoder',
+      message: error.message
+    })
+  }
+})
+
+// Detect anomalies in a power curve
+app.post('/api/anomaly/detect', async (req, res) => {
+  const { tag, sessionId, date, entityId, threshold = 2.5 } = req.body
+
+  if (!tag || !sessionId || !date) {
+    return res.status(400).json({ error: 'Missing tag, sessionId, or date' })
+  }
+
+  const autoencoder = autoencoderModels.get(tag)
+  if (!autoencoder) {
+    return res.status(400).json({ 
+      error: 'No trained model for this tag',
+      message: `Please train an autoencoder for tag "${tag}" first`
+    })
+  }
+
+  try {
+    const connection = haConnections.get(sessionId)
+    if (!connection) {
+      return res.status(401).json({ error: 'Invalid session' })
+    }
+
+    // Load model if not in memory
+    if (!mlModel || !mlStats || mlTags.length === 0) {
+      const modelDir = path.join(__dirname, 'ml', 'saved_model')
+      const metadataPath = path.join(modelDir, 'metadata.json')
+
+      if (!fs.existsSync(metadataPath)) {
+        return res.status(400).json({ 
+          error: 'No trained model available',
+          message: 'Please train a model first in the ML Trainer tab'
+        })
+      }
+
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+      mlTags = metadata.uniqueTags
+      mlStats = metadata.stats
+
+      mlModel = new PowerTagPredictor()
+      mlModel.setTags(mlTags)
+      await mlModel.load(modelDir)
+
+      console.log('✅ ML model loaded from disk for anomaly detection')
+    }
+
+    console.log(`🔍 Detecting anomalies for tag "${tag}" on ${date}`)
+
+    // Get predictions for this tag
+    const targetDate = new Date(date)
+    const dayStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate())
+    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000)
+
+    // Fetch power data
+    const historyUrl = `${connection.url}/api/history/period/${dayStart.toISOString()}`
+    const params = new URLSearchParams({
+      filter_entity_id: entityId || connection.entityId,
+      end_time: dayEnd.toISOString(),
+      minimal_response: 'true',
+      no_attributes: 'true'
+    })
+
+    const response = await fetch(`${historyUrl}?${params}`, {
+      headers: {
+        'Authorization': `Bearer ${connection.token}`,
+        'Content-Type': 'application/json'
+      }
+    })
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch history: ${response.status}`)
+    }
+
+    const history = await response.json()
+    if (!history[0] || history[0].length === 0) {
+      return res.json({ tag, date, anomalies: [], message: 'No data available' })
+    }
+
+    const sortedData = history[0]
+      .filter(state => state.state !== 'unavailable' && state.state !== 'unknown')
+      .map(state => ({
+        timestamp: new Date(state.last_changed).getTime(),
+        value: parseFloat(state.state)
+      }))
+      .filter(d => !isNaN(d.value))
+      .sort((a, b) => a.timestamp - b.timestamp)
+
+    // Get predictions for this tag
+    const slidingPredictor = new SlidingWindowPredictor(mlModel.model, mlTags, mlStats, 10)
+    const predictions = await slidingPredictor.predictDay(sortedData, targetDate, 0.3)
+    
+    const tagPredictions = predictions.filter(p => 
+      p.tag === tag || (p.activeTags && p.activeTags.includes(tag))
+    )
+
+    // Detect anomalies in each window
+    const anomalies = []
+    for (const pred of tagPredictions) {
+      // Convert time strings to timestamps
+      const [startHour, startMin] = pred.startTime.split(':').map(Number)
+      const [endHour, endMin] = pred.endTime.split(':').map(Number)
+      
+      const startTimestamp = new Date(dayStart.getTime() + startHour * 60 * 60 * 1000 + startMin * 60 * 1000).getTime()
+      const endTimestamp = new Date(dayStart.getTime() + endHour * 60 * 60 * 1000 + endMin * 60 * 1000).getTime()
+      
+      const windowData = sortedData.filter(d => 
+        d.timestamp >= startTimestamp && d.timestamp < endTimestamp
+      )
+      
+      if (windowData.length < 30) continue
+
+      const powerCurve = windowData.map(d => d.value)
+      const result = await autoencoder.detectAnomalies(powerCurve, threshold)
+
+      anomalies.push({
+        startTime: startTimestamp,
+        endTime: endTimestamp,
+        startTimeStr: pred.startTime,
+        endTimeStr: pred.endTime,
+        isAnomaly: result.isAnomaly,
+        anomalyScore: result.anomalyScore,
+        reconstructionError: result.reconstructionError,
+        threshold: result.threshold,
+        original: result.original,
+        reconstructed: result.reconstructed,
+        timestamps: windowData.map(d => d.timestamp),
+        avgPower: pred.avgPower
+      })
+    }
+
+    const anomalyCount = anomalies.filter(a => a.isAnomaly).length
+
+    console.log(`✅ Detected ${anomalyCount} anomalies out of ${anomalies.length} windows`)
+
+    res.json({
+      tag,
+      date,
+      anomalies,
+      totalWindows: anomalies.length,
+      anomalyCount,
+      threshold
+    })
+
+  } catch (error) {
+    console.error('Anomaly detection error:', error)
+    res.status(500).json({
+      error: 'Failed to detect anomalies',
       message: error.message
     })
   }

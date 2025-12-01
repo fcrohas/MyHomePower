@@ -55,6 +55,12 @@
         >
           🔍 Power Detector
         </button>
+        <button 
+          :class="['tab-btn', { active: activeTab === 'anomaly' }]"
+          @click="activeTab = 'anomaly'"
+        >
+          🔬 Anomaly Detector
+        </button>
       </div>
 
       <!-- Tagging Tab -->
@@ -138,6 +144,11 @@
         <PowerDetector :sessionId="sessionId" />
       </div>
 
+      <!-- Anomaly Detector Tab -->
+      <div v-show="activeTab === 'anomaly'" class="tab-content">
+        <AnomalyDetector :sessionId="sessionId" />
+      </div>
+
       <!-- Loading/Status -->
       <div v-if="loading" class="loading">Loading data...</div>
     </div>
@@ -151,6 +162,7 @@ import PowerChart from './PowerChart.vue'
 import TagManager from './TagManager.vue'
 import MLTrainer from './MLTrainer.vue'
 import PowerDetector from './PowerDetector.vue'
+import AnomalyDetector from './AnomalyDetector.vue'
 import { connectToHA, fetchHistory, exportDay } from '../services/homeassistant'
 
 // Connection state
