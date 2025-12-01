@@ -81,14 +81,14 @@
           <input 
             type="range" 
             v-model.number="threshold" 
-            min="1.5" 
-            max="4.0" 
-            step="0.1"
+            min="0.1" 
+            max="2.0" 
+            step="0.05"
             :disabled="loading"
           />
-          <span class="threshold-value">{{ threshold.toFixed(1) }}</span>
+          <span class="threshold-value">{{ threshold.toFixed(2) }}</span>
           <span class="threshold-hint">
-            {{ threshold < 2.0 ? 'High' : threshold < 3.0 ? 'Medium' : 'Low' }}
+            {{ threshold < 0.5 ? 'Very High' : threshold < 1.0 ? 'High' : threshold < 1.5 ? 'Medium' : 'Low' }}
           </span>
         </div>
 
@@ -142,34 +142,40 @@
       <div class="chart-header">
         <h3>Anomaly Analysis for "{{ selectedTag }}" on {{ formatDate(selectedDate) }}</h3>
         <div class="legend">
-          <span class="legend-item normal">
-            <span class="color-box"></span> Normal Pattern
-          </span>
-          <span class="legend-item anomaly">
-            <span class="color-box"></span> Anomaly
-          </span>
-          <span class="legend-item reconstructed">
-            <span class="color-box"></span> Reconstructed
+          <span class="legend-item timeline-info">
+            Timeline colors represent anomaly score intensity (green → yellow → red)
           </span>
         </div>
       </div>
 
       <!-- Timeline Overview -->
       <div class="timeline-chart">
-        <h4>Timeline Overview</h4>
-        <svg :width="timelineWidth" :height="150" class="timeline-svg">
-          <!-- Background grid -->
+        <h4 style="text-align: center;">Timeline Overview</h4>
+        <div style="display: flex; justify-content: center;">
+        <svg :width="timelineWidth" :height="180" class="timeline-svg">
+          <!-- Background grid - vertical lines for hours -->
           <g class="grid">
             <line 
               v-for="hour in 24" 
-              :key="hour"
+              :key="'hour-' + hour"
               :x1="(hour / 24) * (timelineWidth - 40) + 20"
               :x2="(hour / 24) * (timelineWidth - 40) + 20"
               y1="10"
               y2="130"
               stroke="#e0e0e0"
               stroke-width="1"
-              stroke-dasharray="2,2"
+              stroke-dasharray="4,4"
+            />
+            <!-- Half-hour tick marks -->
+            <line 
+              v-for="half in 24" 
+              :key="'half-' + half"
+              :x1="((half - 0.5) / 24) * (timelineWidth - 40) + 20"
+              :x2="((half - 0.5) / 24) * (timelineWidth - 40) + 20"
+              y1="125"
+              y2="130"
+              stroke="#ccc"
+              stroke-width="1"
             />
           </g>
 
@@ -182,10 +188,26 @@
               y="30"
               :width="getTimelineWidth(result.startTime, result.endTime)"
               height="80"
-              :fill="result.isAnomaly ? '#ff6b6b' : '#4ecdc4'"
-              :opacity="result.isAnomaly ? 0.8 : 0.3"
+              :fill="getScoreColor(result.anomalyScore)"
+              :opacity="0.8"
               @click="selectWindow(idx)"
               class="timeline-bar"
+              :class="{ 'selected-bar': selectedWindow === idx }"
+            >
+              <title>{{ formatTime(result.startTime) }} - Score: {{ result.anomalyScore.toFixed(3) }}</title>
+            </rect>
+          </g>
+
+          <!-- Power curves overlay -->
+          <g class="power-curves">
+            <path
+              v-for="(result, idx) in anomalyResults"
+              :key="'curve-' + idx"
+              :d="getTimelineCurvePath(result)"
+              fill="none"
+              stroke="#2c3e50"
+              stroke-width="1"
+              opacity="0.6"
             />
           </g>
 
@@ -195,7 +217,7 @@
               v-for="hour in [0, 6, 12, 18, 24]" 
               :key="hour"
               :x="(hour / 24) * (timelineWidth - 40) + 20"
-              y="145"
+              y="155"
               text-anchor="middle"
               font-size="12"
               fill="#666"
@@ -204,116 +226,133 @@
             </text>
           </g>
         </svg>
+        </div>
       </div>
 
-      <!-- Anomaly Score Distribution -->
-      <div class="score-distribution">
-        <h4>Anomaly Score Distribution</h4>
-        <div class="score-bars">
-          <div
-            v-for="(result, idx) in sortedByScore"
-            :key="idx"
-            class="score-bar-item"
-            :class="{ 'is-anomaly': result.isAnomaly, 'selected': selectedWindow === result.originalIndex }"
-            @click="selectWindow(result.originalIndex)"
-          >
-            <div class="score-bar">
-              <div 
-                class="score-fill"
-                :style="{ width: (result.anomalyScore / maxScore * 100) + '%' }"
-              ></div>
+      <!-- Anomaly Score Distribution and Window Detail Side by Side -->
+      <div class="analysis-grid">
+        <!-- Anomaly Score Distribution -->
+        <div class="score-distribution">
+          <h4>Anomaly Score Distribution</h4>
+          <div class="score-bars">
+            <div
+              v-for="(result, idx) in sortedByScore"
+              :key="idx"
+              class="score-bar-item"
+              :class="{ 'is-anomaly': result.isAnomaly, 'selected': selectedWindow === result.originalIndex }"
+              @click="selectWindow(result.originalIndex)"
+            >
+              <div class="score-bar">
+                <div 
+                  class="score-fill"
+                  :style="{ width: (result.anomalyScore / maxScore * 100) + '%' }"
+                ></div>
+              </div>
+              <span class="score-label">{{ formatTime(result.startTime) }}</span>
+              <span class="score-value">{{ result.anomalyScore.toFixed(3) }}</span>
             </div>
-            <span class="score-label">{{ formatTime(result.startTime) }}</span>
-            <span class="score-value">{{ result.anomalyScore.toFixed(3) }}</span>
           </div>
         </div>
-      </div>
 
-      <!-- Selected Window Detail -->
-      <div v-if="selectedWindow !== null" class="window-detail">
-        <h4>Window Detail - {{ formatTime(anomalyResults[selectedWindow].startTime) }}</h4>
-        <div class="detail-info">
-          <span class="info-item">
-            Status: 
-            <strong :class="anomalyResults[selectedWindow].isAnomaly ? 'anomaly-text' : 'normal-text'">
-              {{ anomalyResults[selectedWindow].isAnomaly ? '⚠️ ANOMALY' : '✓ Normal' }}
-            </strong>
-          </span>
-          <span class="info-item">
-            Anomaly Score: <strong>{{ anomalyResults[selectedWindow].anomalyScore.toFixed(4) }}</strong>
-          </span>
-          <span class="info-item">
-            Threshold: <strong>{{ anomalyResults[selectedWindow].threshold.toFixed(2) }}</strong>
-          </span>
-          <span class="info-item">
-            Avg Power: <strong>{{ anomalyResults[selectedWindow].avgPower.toFixed(1) }} W</strong>
-          </span>
+        <!-- Selected Window Detail -->
+        <div v-if="selectedWindow !== null" class="window-detail">
+          <h4>Window Detail - {{ formatTime(anomalyResults[selectedWindow].startTime) }}</h4>
+          <div class="detail-info">
+            <span class="info-item">
+              Status: 
+              <strong :class="anomalyResults[selectedWindow].isAnomaly ? 'anomaly-text' : 'normal-text'">
+                {{ anomalyResults[selectedWindow].isAnomaly ? '⚠️ ANOMALY' : '✓ Normal' }}
+              </strong>
+            </span>
+            <span class="info-item">
+              Anomaly Score: <strong>{{ anomalyResults[selectedWindow].anomalyScore.toFixed(4) }}</strong>
+            </span>
+            <span class="info-item">
+              Threshold: <strong>{{ anomalyResults[selectedWindow].threshold.toFixed(2) }}</strong>
+            </span>
+            <span class="info-item">
+              Avg Power: <strong>{{ anomalyResults[selectedWindow].avgPower.toFixed(1) }} W</strong>
+            </span>
+          </div>
+
+          <!-- Power Curve Comparison -->
+          <div class="power-curve-chart">
+            <div class="curve-legend">
+              <span class="legend-item">
+                <span class="color-box" style="background: #4ecdc4;"></span> Original Pattern
+              </span>
+              <span class="legend-item">
+                <span class="color-box" style="background: #ff6b6b; opacity: 0.5;"></span> Reconstructed by AI
+              </span>
+            </div>
+            <svg :width="chartWidth" :height="300" class="curve-svg">
+              <!-- Axis -->
+              <line x1="40" y1="250" :x2="chartWidth - 20" y2="250" stroke="#333" stroke-width="2" />
+              <line x1="40" y1="30" x2="40" y2="250" stroke="#333" stroke-width="2" />
+
+              <!-- Grid lines -->
+              <g class="grid">
+                <line 
+                  v-for="i in 5" 
+                  :key="i"
+                  x1="40"
+                  :x2="chartWidth - 20"
+                  :y1="30 + (i * 44)"
+                  :y2="30 + (i * 44)"
+                  stroke="#e0e0e0"
+                  stroke-width="1"
+                  stroke-dasharray="2,2"
+                />
+              </g>
+
+              <!-- Original curve -->
+              <polyline
+                :points="getOriginalCurvePoints()"
+                fill="none"
+                stroke="#4ecdc4"
+                stroke-width="2"
+                class="original-curve"
+              />
+
+              <!-- Reconstructed curve -->
+              <polyline
+                :points="getReconstructedCurvePoints()"
+                fill="none"
+                stroke="#ff6b6b"
+                stroke-width="2"
+                stroke-dasharray="5,5"
+                class="reconstructed-curve"
+              />
+
+              <!-- Y-axis labels -->
+              <g class="y-labels">
+                <text 
+                  v-for="(val, i) in yAxisLabels" 
+                  :key="i"
+                  x="35"
+                  :y="250 - (i * 55)"
+                  text-anchor="end"
+                  font-size="12"
+                  fill="#666"
+                >
+                  {{ val }}
+                </text>
+              </g>
+
+              <!-- X-axis label -->
+              <text :x="chartWidth / 2" y="280" text-anchor="middle" font-size="12" fill="#666">
+                Time (samples in 10-minute window)
+              </text>
+              <text x="15" y="140" text-anchor="middle" font-size="12" fill="#666" transform="rotate(-90, 15, 140)">
+                Power (W)
+              </text>
+            </svg>
+          </div>
         </div>
 
-        <!-- Power Curve Comparison -->
-        <div class="power-curve-chart">
-          <svg :width="chartWidth" :height="300" class="curve-svg">
-            <!-- Axis -->
-            <line x1="40" y1="250" :x2="chartWidth - 20" y2="250" stroke="#333" stroke-width="2" />
-            <line x1="40" y1="30" x2="40" y2="250" stroke="#333" stroke-width="2" />
-
-            <!-- Grid lines -->
-            <g class="grid">
-              <line 
-                v-for="i in 5" 
-                :key="i"
-                x1="40"
-                :x2="chartWidth - 20"
-                :y1="30 + (i * 44)"
-                :y2="30 + (i * 44)"
-                stroke="#e0e0e0"
-                stroke-width="1"
-                stroke-dasharray="2,2"
-              />
-            </g>
-
-            <!-- Original curve -->
-            <polyline
-              :points="getOriginalCurvePoints()"
-              fill="none"
-              stroke="#4ecdc4"
-              stroke-width="2"
-              class="original-curve"
-            />
-
-            <!-- Reconstructed curve -->
-            <polyline
-              :points="getReconstructedCurvePoints()"
-              fill="none"
-              stroke="#ff6b6b"
-              stroke-width="2"
-              stroke-dasharray="5,5"
-              class="reconstructed-curve"
-            />
-
-            <!-- Y-axis labels -->
-            <g class="y-labels">
-              <text 
-                v-for="(val, i) in yAxisLabels" 
-                :key="i"
-                x="35"
-                :y="250 - (i * 55)"
-                text-anchor="end"
-                font-size="12"
-                fill="#666"
-              >
-                {{ val }}
-              </text>
-            </g>
-
-            <!-- X-axis label -->
-            <text :x="chartWidth / 2" y="280" text-anchor="middle" font-size="12" fill="#666">
-              Time (samples in 10-minute window)
-            </text>
-            <text x="15" y="140" text-anchor="middle" font-size="12" fill="#666" transform="rotate(-90, 15, 140)">
-              Power (W)
-            </text>
-          </svg>
+        <!-- Placeholder when no window selected -->
+        <div v-else class="window-placeholder">
+          <p>👈 Click on any window in the score distribution to see detailed analysis</p>
         </div>
       </div>
     </div>
@@ -336,7 +375,7 @@ const selectedDate = ref(format(new Date(), 'yyyy-MM-dd'))
 const availableTags = ref([])
 const trainedModels = ref([])
 const trainingDates = ref([format(new Date(), 'yyyy-MM-dd')])
-const threshold = ref(2.5)
+const threshold = ref(0.5)
 const anomalyResults = ref([])
 const selectedWindow = ref(null)
 const loading = ref(false)
@@ -499,6 +538,12 @@ const detectAnomalies = async () => {
     anomalyResults.value = data.anomalies || []
     selectedWindow.value = null
     
+    console.log('Anomaly detection results:', {
+      totalWindows: data.anomalies?.length,
+      anomalyCount: data.anomalyCount,
+      sampleResult: data.anomalies?.[0]
+    })
+    
     if (anomalyResults.value.length === 0) {
       error.value = 'No data found for this tag on the selected date'
     } else {
@@ -558,6 +603,66 @@ const getReconstructedCurvePoints = () => {
     return `${x},${y}`
   })
   return points.join(' ')
+}
+
+const getScoreColor = (score) => {
+  // Normalize score to 0-1 range based on max score
+  const normalized = Math.min(score / maxScore.value, 1)
+  
+  // Color gradient from green (low score) -> yellow -> red (high score)
+  if (normalized < 0.33) {
+    // Green to yellow-green
+    const r = Math.round(78 + (normalized / 0.33) * (150 - 78))
+    const g = Math.round(205 - (normalized / 0.33) * (205 - 200))
+    const b = Math.round(196 - (normalized / 0.33) * (196 - 100))
+    return `rgb(${r}, ${g}, ${b})`
+  } else if (normalized < 0.66) {
+    // Yellow-green to orange
+    const localNorm = (normalized - 0.33) / 0.33
+    const r = Math.round(150 + localNorm * (255 - 150))
+    const g = Math.round(200 - localNorm * (200 - 140))
+    const b = Math.round(100 - localNorm * 100)
+    return `rgb(${r}, ${g}, ${b})`
+  } else {
+    // Orange to red
+    const localNorm = (normalized - 0.66) / 0.34
+    const r = 255
+    const g = Math.round(140 - localNorm * (140 - 107))
+    const b = Math.round(0 + localNorm * 107)
+    return `rgb(${r}, ${g}, ${b})`
+  }
+}
+
+const getTimelineCurvePath = (result) => {
+  if (!result.original || result.original.length === 0) return ''
+  
+  // Find max power across all windows for consistent scaling
+  const allMaxPowers = anomalyResults.value.map(r => Math.max(...r.original))
+  const globalMax = Math.max(...allMaxPowers)
+  
+  // Calculate starting x position
+  const startX = getTimelineX(result.startTime)
+  const width = getTimelineWidth(result.startTime, result.endTime)
+  
+  // Generate path points
+  const points = result.original.map((power, idx) => {
+    const x = startX + (idx / result.original.length) * width
+    // Scale power to fit within the bar height (80px), with some padding
+    const y = 110 - (power / globalMax) * 70 // 110 = 30 (top) + 80 (height), scaled to 70px
+    return `${x},${y}`
+  })
+  
+  // Create SVG path
+  if (points.length === 0) return ''
+  const firstPoint = points[0].split(',')
+  let path = `M ${firstPoint[0]} ${firstPoint[1]}`
+  
+  for (let i = 1; i < points.length; i++) {
+    const point = points[i].split(',')
+    path += ` L ${point[0]} ${point[1]}`
+  }
+  
+  return path
 }
 
 // Lifecycle
@@ -931,29 +1036,37 @@ button:disabled {
   color: #666;
 }
 
+.legend-item.timeline-info {
+  font-style: italic;
+  color: #666;
+}
+
 .legend-item .color-box {
   width: 20px;
   height: 12px;
   border-radius: 2px;
 }
 
-.legend-item.normal .color-box {
-  background: #4ecdc4;
-}
-
-.legend-item.anomaly .color-box {
-  background: #ff6b6b;
-}
-
-.legend-item.reconstructed .color-box {
-  background: #ff6b6b;
-  opacity: 0.5;
+.curve-legend {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: #f8f9fa;
+  border-radius: 6px;
+  justify-content: center;
 }
 
 .timeline-chart,
-.score-distribution,
-.window-detail {
+.analysis-grid {
   margin-bottom: 2rem;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: 400px 1fr;
+  gap: 2rem;
+  align-items: start;
 }
 
 .timeline-chart h4,
@@ -973,11 +1086,16 @@ button:disabled {
 
 .timeline-bar {
   cursor: pointer;
-  transition: opacity 0.3s;
+  transition: opacity 0.3s, stroke 0.3s;
 }
 
 .timeline-bar:hover {
   opacity: 1 !important;
+}
+
+.timeline-bar.selected-bar {
+  stroke: #2c3e50;
+  stroke-width: 3;
 }
 
 .score-bars {
@@ -1049,6 +1167,21 @@ button:disabled {
   background: #f8f9fa;
   border-radius: 8px;
   border: 2px solid #42b983;
+  min-height: 400px;
+}
+
+.window-placeholder {
+  padding: 3rem 1.5rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 2px dashed #ccc;
+  text-align: center;
+  color: #666;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
 }
 
 .detail-info {
@@ -1114,6 +1247,10 @@ button:disabled {
   .detail-info {
     flex-direction: column;
     gap: 0.5rem;
+  }
+
+  .analysis-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>
