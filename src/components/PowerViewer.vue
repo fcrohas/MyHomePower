@@ -104,6 +104,7 @@
             @add-tag="addTag"
             @delete-tag="deleteTag"
             @clear-selection="clearSelection"
+            @sensors-changed="onSensorsChanged"
           />
         </div>
       </div>
@@ -182,6 +183,8 @@ const selectedDate = ref(format(new Date(), 'yyyy-MM-dd'))
 
 // Data
 const powerData = ref([])
+const rawPowerData = ref([]) // Store original data before subtraction
+const subtractedSensorIds = ref([])
 const tags = ref([])
 const selectedRange = ref(null)
 
@@ -268,10 +271,13 @@ const loadData = async () => {
     
     const history = await fetchHistory(haUrl.value, haToken.value, entityId.value, startDate, endDate)
     
-    powerData.value = history.map(item => ({
+    rawPowerData.value = history.map(item => ({
       timestamp: item.last_changed,
       value: parseFloat(item.state)
     })).filter(item => !isNaN(item.value))
+    
+    // Apply sensor subtractions if any
+    await applySensorSubtractions()
     
   } catch (err) {
     error.value = 'Failed to load data: ' + err.message
@@ -322,6 +328,125 @@ const deleteTag = (tagId) => {
 
 const clearSelection = () => {
   selectedRange.value = null
+}
+
+// Handle sensors changed event
+const onSensorsChanged = async (sensorIds) => {
+  console.log('🔥 onSensorsChanged called with:', sensorIds)
+  console.log('Type:', typeof sensorIds, 'Is Array:', Array.isArray(sensorIds))
+  console.log('Length:', sensorIds?.length)
+  console.log('Contents:', JSON.stringify(sensorIds))
+  subtractedSensorIds.value = sensorIds
+  console.log('subtractedSensorIds.value set to:', subtractedSensorIds.value)
+  await applySensorSubtractions()
+}
+
+// Apply sensor subtractions
+const applySensorSubtractions = async () => {
+  console.log('applySensorSubtractions called', {
+    hasRawData: rawPowerData.value?.length > 0,
+    sensorIds: subtractedSensorIds.value
+  })
+  
+  if (!rawPowerData.value || rawPowerData.value.length === 0) {
+    powerData.value = []
+    return
+  }
+  
+  // Start with raw data
+  powerData.value = [...rawPowerData.value]
+  
+  // If no sensors to subtract, we're done
+  if (!subtractedSensorIds.value || subtractedSensorIds.value.length === 0) {
+    console.log('No sensors to subtract, using raw data')
+    return
+  }
+  
+  try {
+    const startDate = new Date(selectedDate.value)
+    startDate.setHours(0, 0, 0, 0)
+    
+    const endDate = new Date(selectedDate.value)
+    endDate.setHours(23, 59, 59, 999)
+    
+    console.log('Fetching history for sensors:', subtractedSensorIds.value)
+    
+    // Fetch history for each sensor
+    for (const sensorId of subtractedSensorIds.value) {
+      try {
+        console.log(`Fetching history for ${sensorId}...`)
+        const sensorHistory = await fetchHistory(haUrl.value, haToken.value, sensorId, startDate, endDate)
+        
+        console.log(`Got ${sensorHistory.length} data points for ${sensorId}`)
+        console.log('First 5 data points:', sensorHistory.slice(0, 5))
+        
+        const sensorData = sensorHistory.map(item => ({
+          timestamp: item.last_changed,
+          value: parseFloat(item.state)
+        })).filter(item => !isNaN(item.value))
+        
+        console.log(`Processed ${sensorData.length} valid data points for ${sensorId}`)
+        console.log('First 5 processed points:', sensorData.slice(0, 5))
+        console.log('Value range:', {
+          min: Math.min(...sensorData.map(d => d.value)),
+          max: Math.max(...sensorData.map(d => d.value)),
+          avg: sensorData.reduce((sum, d) => sum + d.value, 0) / sensorData.length
+        })
+        
+        // Subtract sensor data from power data
+        const beforeLength = powerData.value.length
+        const beforeFirst5 = powerData.value.slice(0, 5).map(d => d.value)
+        powerData.value = subtractSensorData(powerData.value, sensorData)
+        const afterFirst5 = powerData.value.slice(0, 5).map(d => d.value)
+        console.log(`Subtraction complete: ${beforeLength} points processed`)
+        console.log('Before subtraction (first 5 values):', beforeFirst5)
+        console.log('After subtraction (first 5 values):', afterFirst5)
+        
+      } catch (err) {
+        console.error(`Failed to fetch history for ${sensorId}:`, err)
+        error.value = `Warning: Failed to subtract ${sensorId}: ${err.message}`
+      }
+    }
+    
+  } catch (err) {
+    console.error('Error applying sensor subtractions:', err)
+    error.value = 'Failed to apply sensor subtractions: ' + err.message
+  }
+}
+
+// Subtract sensor data from main power data
+const subtractSensorData = (mainData, sensorData) => {
+  // Create a map of sensor data by timestamp for quick lookup
+  const sensorMap = new Map()
+  sensorData.forEach(item => {
+    const timestamp = new Date(item.timestamp).getTime()
+    sensorMap.set(timestamp, item.value)
+  })
+  
+  // Subtract sensor values from main data
+  return mainData.map(item => {
+    const timestamp = new Date(item.timestamp).getTime()
+    
+    // Find closest sensor value (within 5 minutes)
+    let closestValue = 0
+    let minDiff = 5 * 60 * 1000 // 5 minutes in ms
+    
+    for (const [sensorTime, sensorValue] of sensorMap.entries()) {
+      const diff = Math.abs(timestamp - sensorTime)
+      if (diff < minDiff) {
+        minDiff = diff
+        closestValue = sensorValue
+      }
+    }
+    
+    // Subtract and ensure non-negative
+    const newValue = Math.max(0, item.value - closestValue)
+    
+    return {
+      timestamp: item.timestamp,
+      value: newValue
+    }
+  })
 }
 
 // Get color for a label (matches chart colors)
