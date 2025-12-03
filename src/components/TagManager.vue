@@ -220,6 +220,10 @@ const props = defineProps({
   currentDate: {
     type: String,
     required: true
+  },
+  showToast: {
+    type: Function,
+    default: null
   }
 })
 
@@ -467,7 +471,9 @@ const fetchAndSubtractSensorData = async (entityId) => {
     
   } catch (error) {
     console.error('Failed to fetch sensor history:', error)
-    alert('Failed to fetch sensor history: ' + error.message)
+    if (props.showToast) {
+      props.showToast('Failed to fetch sensor history: ' + error.message, 'error')
+    }
   }
 }
 

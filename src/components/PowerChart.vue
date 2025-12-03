@@ -40,6 +40,52 @@ const chartCanvas = ref(null)
 let chartInstance = null
 let isSelecting = false
 let selectionStart = null
+let selectionStartX = null
+let crosshairX = null
+
+// Custom crosshair plugin
+const crosshairPlugin = {
+  id: 'crosshair',
+  afterDraw: (chart) => {
+    const ctx = chart.ctx
+    const chartArea = chart.chartArea
+    
+    ctx.save()
+    
+    // Draw the current mouse position crosshair
+    if (crosshairX !== null) {
+      ctx.beginPath()
+      ctx.moveTo(crosshairX, chartArea.top)
+      ctx.lineTo(crosshairX, chartArea.bottom)
+      ctx.lineWidth = 1
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)'
+      ctx.setLineDash([5, 5])
+      ctx.stroke()
+    }
+    
+    // Draw the selection start line when selecting
+    if (isSelecting && selectionStartX !== null) {
+      ctx.beginPath()
+      ctx.moveTo(selectionStartX, chartArea.top)
+      ctx.lineTo(selectionStartX, chartArea.bottom)
+      ctx.lineWidth = 2
+      ctx.strokeStyle = 'rgba(255, 193, 7, 0.8)'
+      ctx.setLineDash([5, 5])
+      ctx.stroke()
+      
+      // Draw a light box between the start and current position
+      if (crosshairX !== null && crosshairX !== selectionStartX) {
+        ctx.setLineDash([])
+        ctx.fillStyle = 'rgba(255, 193, 7, 0.15)'
+        const left = Math.min(selectionStartX, crosshairX)
+        const width = Math.abs(crosshairX - selectionStartX)
+        ctx.fillRect(left, chartArea.top, width, chartArea.bottom - chartArea.top)
+      }
+    }
+    
+    ctx.restore()
+  }
+}
 
 const createChart = () => {
   if (!chartCanvas.value) return
@@ -68,6 +114,7 @@ const createChart = () => {
         }
       ]
     },
+    plugins: [crosshairPlugin],
     options: {
       responsive: true,
       maintainAspectRatio: true,
@@ -140,28 +187,77 @@ const getAnnotations = () => {
     
     const colors = getTagColorByLabel(tag.label)
     
-    annotations[`tag-${tag.id}`] = {
+    // Add box annotation for the zone
+    annotations[`tag-box-${tag.id}`] = {
       type: 'box',
       xMin: startTime,
       xMax: endTime,
+      yMin: 'min',
+      yMax: 'max',
       backgroundColor: colors.background,
+      borderWidth: 0
+    }
+    
+    // Add line annotations for start and end with labels
+    annotations[`tag-line-start-${tag.id}`] = {
+      type: 'line',
+      xMin: startTime,
+      xMax: startTime,
+      yMin: 'min',
+      yMax: 'max',
       borderColor: colors.border,
       borderWidth: 2,
       label: {
         content: tag.label,
         enabled: true,
-        position: 'start'
+        position: 'start',
+        backgroundColor: colors.border,
+        color: '#fff'
       }
+    }
+    
+    annotations[`tag-line-end-${tag.id}`] = {
+      type: 'line',
+      xMin: endTime,
+      xMax: endTime,
+      yMin: 'min',
+      yMax: 'max',
+      borderColor: colors.border,
+      borderWidth: 2
     }
   })
   
   // Add selection annotation
   if (props.selectedRange) {
-    annotations['selection'] = {
+    // Add box for the zone
+    annotations['selection-box'] = {
       type: 'box',
       xMin: props.selectedRange.start,
       xMax: props.selectedRange.end,
-      backgroundColor: 'rgba(255, 193, 7, 0.2)',
+      yMin: 'min',
+      yMax: 'max',
+      backgroundColor: 'rgba(255, 193, 7, 0.15)',
+      borderWidth: 0
+    }
+    
+    // Add lines for boundaries
+    annotations['selection-line-start'] = {
+      type: 'line',
+      xMin: props.selectedRange.start,
+      xMax: props.selectedRange.start,
+      yMin: 'min',
+      yMax: 'max',
+      borderColor: 'rgba(255, 193, 7, 0.8)',
+      borderWidth: 2,
+      borderDash: [5, 5]
+    }
+    
+    annotations['selection-line-end'] = {
+      type: 'line',
+      xMin: props.selectedRange.end,
+      xMax: props.selectedRange.end,
+      yMin: 'min',
+      yMax: 'max',
       borderColor: 'rgba(255, 193, 7, 0.8)',
       borderWidth: 2,
       borderDash: [5, 5]
@@ -224,13 +320,25 @@ const handleMouseDown = (event) => {
     isSelecting = true
     const index = points[0].index
     selectionStart = props.data[index]?.x
+    
+    // Store the X pixel position for drawing
+    const rect = chartCanvas.value.getBoundingClientRect()
+    selectionStartX = event.clientX - rect.left
   }
 }
 
 const handleMouseMove = (event) => {
-  if (!isSelecting || !chartInstance) return
+  if (!chartInstance) return
   
-  chartCanvas.value.style.cursor = 'crosshair'
+  // Update crosshair position
+  const rect = chartCanvas.value.getBoundingClientRect()
+  const x = event.clientX - rect.left
+  crosshairX = x
+  chartInstance.update('none')
+  
+  if (isSelecting) {
+    chartCanvas.value.style.cursor = 'crosshair'
+  }
 }
 
 const handleMouseUp = (event) => {
@@ -257,14 +365,21 @@ const handleMouseUp = (event) => {
   
   isSelecting = false
   selectionStart = null
+  selectionStartX = null
   chartCanvas.value.style.cursor = 'default'
+  chartInstance.update('none')
 }
 
 const handleMouseLeave = () => {
   isSelecting = false
   selectionStart = null
+  selectionStartX = null
+  crosshairX = null
   if (chartCanvas.value) {
     chartCanvas.value.style.cursor = 'default'
+  }
+  if (chartInstance) {
+    chartInstance.update('none')
   }
 }
 
