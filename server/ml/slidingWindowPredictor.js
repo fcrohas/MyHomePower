@@ -319,8 +319,19 @@ class SlidingWindowPredictor {
    * Normalize values using training stats
    */
   normalize(values) {
-    const minPower = this.stats.minPower
-    const maxPower = this.stats.maxPower
+    let minPower = this.stats.minPower
+    let maxPower = this.stats.maxPower
+    
+    // Safety check: handle null/invalid stats from older models
+    if (minPower == null || !isFinite(minPower)) {
+      console.warn('⚠️  Warning: Invalid minPower in stats, using 0')
+      minPower = 0
+    }
+    if (maxPower == null || !isFinite(maxPower)) {
+      console.warn('⚠️  Warning: Invalid maxPower in stats, using 10000')
+      maxPower = 10000
+    }
+    
     const range = maxPower - minPower
     return values.map(p => range > 0 ? (p - minPower) / range : 0)
   }

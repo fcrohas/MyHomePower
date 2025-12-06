@@ -801,7 +801,29 @@ app.post('/api/ml/predict', async (req, res) => {
 
     // Load model if not in memory
     if (!mlModel) {
-      const modelDir = path.join(__dirname, 'ml', 'saved_model')
+      // Use current model ID, or find most recent model
+      let modelDir
+      if (currentModelId) {
+        modelDir = path.join(__dirname, 'ml', 'models', currentModelId)
+      } else {
+        // Find most recent model
+        const modelsDir = path.join(__dirname, 'ml', 'models')
+        if (!fs.existsSync(modelsDir)) {
+          return res.status(404).json({ error: 'No trained model found. Please train the model first.' })
+        }
+        
+        const modelDirs = fs.readdirSync(modelsDir)
+          .filter(item => fs.statSync(path.join(modelsDir, item)).isDirectory())
+          .sort((a, b) => parseInt(b) - parseInt(a)) // Sort by timestamp (newest first)
+        
+        if (modelDirs.length === 0) {
+          return res.status(404).json({ error: 'No trained model found. Please train the model first.' })
+        }
+        
+        currentModelId = modelDirs[0]
+        modelDir = path.join(modelsDir, currentModelId)
+      }
+      
       const metadataPath = path.join(modelDir, 'metadata.json')
 
       if (!fs.existsSync(metadataPath)) {
@@ -816,7 +838,7 @@ app.post('/api/ml/predict', async (req, res) => {
       mlModel.setTags(mlTags)
       await mlModel.load(modelDir)
 
-      console.log('✅ ML model loaded from disk')
+      console.log(`✅ ML model loaded from disk (ID: ${currentModelId})`)
     }
 
     // Prepare input (last 50 minutes of data)
@@ -889,7 +911,37 @@ app.post('/api/ml/predict-day-sliding', async (req, res) => {
     if (!mlModel) {
       sendProgress('Loading ML model...')
       
-      const modelDir = path.join(__dirname, 'ml', 'saved_model')
+      // Use current model ID, or find most recent model
+      let modelDir
+      if (currentModelId) {
+        modelDir = path.join(__dirname, 'ml', 'models', currentModelId)
+      } else {
+        // Find most recent model
+        const modelsDir = path.join(__dirname, 'ml', 'models')
+        if (!fs.existsSync(modelsDir)) {
+          if (wantsSSE) {
+            res.write(`data: ${JSON.stringify({ type: 'error', message: 'No trained model found. Please train the model first.' })}\n\n`)
+            return res.end()
+          }
+          return res.status(404).json({ error: 'No trained model found. Please train the model first.' })
+        }
+        
+        const modelDirs = fs.readdirSync(modelsDir)
+          .filter(item => fs.statSync(path.join(modelsDir, item)).isDirectory())
+          .sort((a, b) => parseInt(b) - parseInt(a)) // Sort by timestamp (newest first)
+        
+        if (modelDirs.length === 0) {
+          if (wantsSSE) {
+            res.write(`data: ${JSON.stringify({ type: 'error', message: 'No trained model found. Please train the model first.' })}\n\n`)
+            return res.end()
+          }
+          return res.status(404).json({ error: 'No trained model found. Please train the model first.' })
+        }
+        
+        currentModelId = modelDirs[0]
+        modelDir = path.join(modelsDir, currentModelId)
+      }
+      
       const metadataPath = path.join(modelDir, 'metadata.json')
 
       if (!fs.existsSync(metadataPath)) {
@@ -908,7 +960,7 @@ app.post('/api/ml/predict-day-sliding', async (req, res) => {
       mlModel.setTags(mlTags)
       await mlModel.load(modelDir)
 
-      console.log('✅ ML model loaded from disk')
+      console.log(`✅ ML model loaded from disk (ID: ${currentModelId})`)
     }
 
     sendProgress('Preprocessing power data...')
@@ -1081,7 +1133,29 @@ app.post('/api/ml/predict-day', async (req, res) => {
 
     // Load model if not in memory
     if (!mlModel) {
-      const modelDir = path.join(__dirname, 'ml', 'saved_model')
+      // Use current model ID, or find most recent model
+      let modelDir
+      if (currentModelId) {
+        modelDir = path.join(__dirname, 'ml', 'models', currentModelId)
+      } else {
+        // Find most recent model
+        const modelsDir = path.join(__dirname, 'ml', 'models')
+        if (!fs.existsSync(modelsDir)) {
+          return res.status(404).json({ error: 'No trained model found. Please train the model first.' })
+        }
+        
+        const modelDirs = fs.readdirSync(modelsDir)
+          .filter(item => fs.statSync(path.join(modelsDir, item)).isDirectory())
+          .sort((a, b) => parseInt(b) - parseInt(a)) // Sort by timestamp (newest first)
+        
+        if (modelDirs.length === 0) {
+          return res.status(404).json({ error: 'No trained model found. Please train the model first.' })
+        }
+        
+        currentModelId = modelDirs[0]
+        modelDir = path.join(modelsDir, currentModelId)
+      }
+      
       const metadataPath = path.join(modelDir, 'metadata.json')
 
       if (!fs.existsSync(metadataPath)) {
@@ -1096,7 +1170,7 @@ app.post('/api/ml/predict-day', async (req, res) => {
       mlModel.setTags(mlTags)
       await mlModel.load(modelDir)
 
-      console.log('✅ ML model loaded from disk')
+      console.log(`✅ ML model loaded from disk (ID: ${currentModelId})`)
     }
 
     console.log(`Making predictions for ${date} with ${powerData.length} data points`)
@@ -1356,7 +1430,35 @@ app.post('/api/anomaly/tag-predictions', async (req, res) => {
 
     // Load model if not in memory
     if (!mlModel || !mlStats || mlTags.length === 0) {
-      const modelDir = path.join(__dirname, 'ml', 'saved_model')
+      // Use current model ID, or find most recent model
+      let modelDir
+      if (currentModelId) {
+        modelDir = path.join(__dirname, 'ml', 'models', currentModelId)
+      } else {
+        // Find most recent model
+        const modelsDir = path.join(__dirname, 'ml', 'models')
+        if (!fs.existsSync(modelsDir)) {
+          return res.status(400).json({ 
+            error: 'No trained model available',
+            message: 'Please train a model first in the ML Trainer tab'
+          })
+        }
+        
+        const modelDirs = fs.readdirSync(modelsDir)
+          .filter(item => fs.statSync(path.join(modelsDir, item)).isDirectory())
+          .sort((a, b) => parseInt(b) - parseInt(a)) // Sort by timestamp (newest first)
+        
+        if (modelDirs.length === 0) {
+          return res.status(400).json({ 
+            error: 'No trained model available',
+            message: 'Please train a model first in the ML Trainer tab'
+          })
+        }
+        
+        currentModelId = modelDirs[0]
+        modelDir = path.join(modelsDir, currentModelId)
+      }
+      
       const metadataPath = path.join(modelDir, 'metadata.json')
 
       if (!fs.existsSync(metadataPath)) {
@@ -1374,7 +1476,7 @@ app.post('/api/anomaly/tag-predictions', async (req, res) => {
       mlModel.setTags(mlTags)
       await mlModel.load(modelDir)
 
-      console.log('✅ ML model loaded from disk for tag predictions')
+      console.log(`✅ ML model loaded from disk for tag predictions (ID: ${currentModelId})`)
     }
 
     console.log(`🔍 Fetching predictions for tag "${tag}" on ${date}`)
@@ -1496,7 +1598,37 @@ app.post('/api/anomaly/train', async (req, res) => {
 
     // Load model if not in memory
     if (!mlModel || !mlStats || mlTags.length === 0) {
-      const modelDir = path.join(__dirname, 'ml', 'saved_model')
+      // Use current model ID, or find most recent model
+      let modelDir
+      if (currentModelId) {
+        modelDir = path.join(__dirname, 'ml', 'models', currentModelId)
+      } else {
+        // Find most recent model
+        const modelsDir = path.join(__dirname, 'ml', 'models')
+        if (!fs.existsSync(modelsDir)) {
+          autoencoderTraining.delete(tag)
+          return res.status(400).json({ 
+            error: 'No trained model available',
+            message: 'Please train a model first in the ML Trainer tab'
+          })
+        }
+        
+        const modelDirs = fs.readdirSync(modelsDir)
+          .filter(item => fs.statSync(path.join(modelsDir, item)).isDirectory())
+          .sort((a, b) => parseInt(b) - parseInt(a)) // Sort by timestamp (newest first)
+        
+        if (modelDirs.length === 0) {
+          autoencoderTraining.delete(tag)
+          return res.status(400).json({ 
+            error: 'No trained model available',
+            message: 'Please train a model first in the ML Trainer tab'
+          })
+        }
+        
+        currentModelId = modelDirs[0]
+        modelDir = path.join(modelsDir, currentModelId)
+      }
+      
       const metadataPath = path.join(modelDir, 'metadata.json')
 
       if (!fs.existsSync(metadataPath)) {
@@ -1515,7 +1647,7 @@ app.post('/api/anomaly/train', async (req, res) => {
       mlModel.setTags(mlTags)
       await mlModel.load(modelDir)
 
-      console.log('✅ ML model loaded from disk for autoencoder training')
+      console.log(`✅ ML model loaded from disk for autoencoder training (ID: ${currentModelId})`)
     }
 
     console.log(`🧠 Starting autoencoder training for tag: ${tag}`)
@@ -1706,7 +1838,35 @@ app.post('/api/anomaly/detect', async (req, res) => {
 
     // Load model if not in memory
     if (!mlModel || !mlStats || mlTags.length === 0) {
-      const modelDir = path.join(__dirname, 'ml', 'saved_model')
+      // Use current model ID, or find most recent model
+      let modelDir
+      if (currentModelId) {
+        modelDir = path.join(__dirname, 'ml', 'models', currentModelId)
+      } else {
+        // Find most recent model
+        const modelsDir = path.join(__dirname, 'ml', 'models')
+        if (!fs.existsSync(modelsDir)) {
+          return res.status(400).json({ 
+            error: 'No trained model available',
+            message: 'Please train a model first in the ML Trainer tab'
+          })
+        }
+        
+        const modelDirs = fs.readdirSync(modelsDir)
+          .filter(item => fs.statSync(path.join(modelsDir, item)).isDirectory())
+          .sort((a, b) => parseInt(b) - parseInt(a)) // Sort by timestamp (newest first)
+        
+        if (modelDirs.length === 0) {
+          return res.status(400).json({ 
+            error: 'No trained model available',
+            message: 'Please train a model first in the ML Trainer tab'
+          })
+        }
+        
+        currentModelId = modelDirs[0]
+        modelDir = path.join(modelsDir, currentModelId)
+      }
+      
       const metadataPath = path.join(modelDir, 'metadata.json')
 
       if (!fs.existsSync(metadataPath)) {
@@ -1724,7 +1884,7 @@ app.post('/api/anomaly/detect', async (req, res) => {
       mlModel.setTags(mlTags)
       await mlModel.load(modelDir)
 
-      console.log('✅ ML model loaded from disk for anomaly detection')
+      console.log(`✅ ML model loaded from disk for anomaly detection (ID: ${currentModelId})`)
     }
 
     console.log(`🔍 Detecting anomalies for tag "${tag}" on ${date}`)
@@ -1839,19 +1999,32 @@ app.listen(PORT, () => {
   console.log(`📊 Ready to proxy Home Assistant requests`)
   
   // Load existing model metadata if available
-  const modelDir = path.join(__dirname, 'ml', 'saved_model')
-  const metadataPath = path.join(modelDir, 'metadata.json')
+  const modelsDir = path.join(__dirname, 'ml', 'models')
   
-  if (fs.existsSync(metadataPath)) {
+  if (fs.existsSync(modelsDir)) {
     try {
-      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
-      trainingMetadata = metadata
-      mlTags = metadata.uniqueTags || []
-      mlStats = metadata.stats || null
-      trainingHistory = metadata.trainingHistory || []
-      console.log(`✅ Loaded training metadata from ${metadata.trainedAt}`)
-      console.log(`   - ${metadata.datasetInfo?.numberOfDays || 'N/A'} days of training data`)
-      console.log(`   - ${mlTags.length} unique tags`)
+      // Find most recent model
+      const modelDirs = fs.readdirSync(modelsDir)
+        .filter(item => fs.statSync(path.join(modelsDir, item)).isDirectory())
+        .sort((a, b) => parseInt(b) - parseInt(a)) // Sort by timestamp (newest first)
+      
+      if (modelDirs.length > 0) {
+        currentModelId = modelDirs[0]
+        const modelDir = path.join(modelsDir, currentModelId)
+        const metadataPath = path.join(modelDir, 'metadata.json')
+        
+        if (fs.existsSync(metadataPath)) {
+          const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+          trainingMetadata = metadata
+          mlTags = metadata.uniqueTags || []
+          mlStats = metadata.stats || null
+          trainingHistory = metadata.trainingHistory || []
+          console.log(`✅ Loaded training metadata from ${metadata.trainedAt}`)
+          console.log(`   - Model ID: ${currentModelId}`)
+          console.log(`   - ${metadata.datasetInfo?.numberOfDays || 'N/A'} days of training data`)
+          console.log(`   - ${mlTags.length} unique tags`)
+        }
+      }
     } catch (err) {
       console.warn('⚠️ Failed to load training metadata:', err.message)
     }

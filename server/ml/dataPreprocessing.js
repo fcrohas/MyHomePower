@@ -168,8 +168,13 @@ function resampleWindow(windowData, targetPoints = 60) {
  * @returns {Object} {normalized, min, max}
  */
 function normalize(values, min = null, max = null) {
-  if (min === null) min = Math.min(...values)
-  if (max === null) max = Math.max(...values)
+  // Safety checks for invalid min/max
+  if (min == null || !isFinite(min)) {
+    min = Math.min(...values)
+  }
+  if (max == null || !isFinite(max)) {
+    max = Math.max(...values)
+  }
 
   const range = max - min || 1 // Avoid division by zero
 
@@ -205,7 +210,9 @@ export function prepareTrainingData(
 
   for (const { powerData, tagData } of datasets) {
     const dataPoints = powerData.data
-    allPowerValues.push(...dataPoints.map(dp => dp.power))
+    const validPowers = dataPoints.map(dp => dp.power).filter(p => p != null && !isNaN(p))
+    allPowerValues.push(...validPowers)
+    console.log(`  Date ${powerData.date || 'unknown'}: ${dataPoints.length} points, ${validPowers.length} valid powers`)
 
     // Create windows with smaller step size for data augmentation
     const windows = createWindows(dataPoints, windowSizeMinutes, stepSizeMinutes)
@@ -223,22 +230,32 @@ export function prepareTrainingData(
       ).toISOString()
       const tags = getTagsForTimestamp(targetTimestamp, tagData.entries)
 
-      // If selectedTags filter is provided, only include samples with at least one selected tag
+      // If selectedTags filter is provided, include samples with selected tags OR standby
       if (selectedTags && selectedTags.length > 0) {
         const hasSelectedTag = tags.some(tag => selectedTags.includes(tag))
-        if (!hasSelectedTag) {
-          continue // Skip this sample
+        const isStandby = tags.length === 1 && tags[0] === 'standby'
+        
+        // Include if has selected tag OR is standby (to provide negative examples)
+        if (!hasSelectedTag && !isStandby) {
+          continue // Skip samples with other appliances
         }
-        // Filter tags to only include selected ones
-        const filteredTags = tags.filter(tag => selectedTags.includes(tag))
-        if (filteredTags.length === 0) {
-          continue // Skip if no selected tags remain
+        
+        // For standby, keep it as is; for others, filter to selected tags only
+        let finalTags
+        if (isStandby) {
+          finalTags = ['standby']
+          allTags.add('standby')
+        } else {
+          finalTags = tags.filter(tag => selectedTags.includes(tag))
+          if (finalTags.length === 0) {
+            continue // Skip if no selected tags remain after filtering
+          }
+          finalTags.forEach(tag => allTags.add(tag))
         }
-        // Add filtered tags to the set
-        filteredTags.forEach(tag => allTags.add(tag))
+        
         allSamples.push({
           inputWindows,
-          targetTags: filteredTags
+          targetTags: finalTags
         })
       } else {
         // Add all tags to the set
@@ -253,6 +270,7 @@ export function prepareTrainingData(
 
   console.log(`Created ${allSamples.length} training samples`)
   console.log(`Unique tags: ${allTags.size}`)
+  console.log(`Total power values collected: ${allPowerValues.length}`)
   
   // Check for class imbalance
   const tagCounts = {}
@@ -273,9 +291,19 @@ export function prepareTrainingData(
   let minPower = Infinity
   let maxPower = -Infinity
   for (const power of allPowerValues) {
-    if (power < minPower) minPower = power
-    if (power > maxPower) maxPower = power
+    if (power != null && !isNaN(power)) {
+      if (power < minPower) minPower = power
+      if (power > maxPower) maxPower = power
+    }
   }
+  
+  // Safety check: if no valid power values found, use sensible defaults
+  if (!isFinite(minPower) || !isFinite(maxPower)) {
+    console.warn(`⚠️  Warning: Could not calculate power range from data. Using defaults.`)
+    minPower = 0
+    maxPower = 10000
+  }
+  
   console.log(`Power range: ${minPower}W - ${maxPower}W`)
 
   // Convert tags to array and create encoding map
