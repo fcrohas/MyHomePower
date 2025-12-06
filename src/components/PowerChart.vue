@@ -4,6 +4,9 @@
       <button @click="showAutoLabelSettings = true" class="btn-auto-label" title="Auto Label with ML">
         🤖 Auto Labels
       </button>
+      <button @click="resetZoom" class="btn-reset-zoom" title="Reset Zoom">
+        🔍 Reset Zoom
+      </button>
     </div>
     <canvas ref="chartCanvas"></canvas>
     <div class="chart-instructions" v-if="!selectedRange">
@@ -70,9 +73,10 @@
 import { ref, onMounted, watch, nextTick } from 'vue'
 import { Chart, registerables } from 'chart.js'
 import annotationPlugin from 'chartjs-plugin-annotation'
+import zoomPlugin from 'chartjs-plugin-zoom'
 import 'chartjs-adapter-date-fns'
 
-Chart.register(...registerables, annotationPlugin)
+Chart.register(...registerables, annotationPlugin, zoomPlugin)
 
 const props = defineProps({
   data: {
@@ -213,6 +217,29 @@ const createChart = () => {
         },
         annotation: {
           annotations: getAnnotations()
+        },
+        zoom: {
+          zoom: {
+            wheel: {
+              enabled: true,
+              speed: 0.1
+            },
+            pinch: {
+              enabled: true
+            },
+            mode: 'x'
+          },
+          pan: {
+            enabled: true,
+            mode: 'x',
+            modifierKey: 'ctrl'
+          },
+          limits: {
+            x: {
+              min: 'original',
+              max: 'original'
+            }
+          }
         }
       },
       scales: {
@@ -624,6 +651,12 @@ const formatModelDate = (isoDate) => {
   })
 }
 
+const resetZoom = () => {
+  if (chartInstance) {
+    chartInstance.resetZoom()
+  }
+}
+
 onMounted(async () => {
   await nextTick()
   createChart()
@@ -657,6 +690,7 @@ watch(() => [props.tags, props.selectedRange], () => {
 }
 
 .btn-auto-label,
+.btn-reset-zoom,
 .btn-accept-all,
 .btn-clear {
   padding: 0.5rem 1rem;
@@ -675,6 +709,16 @@ watch(() => [props.tags, props.selectedRange], () => {
 .btn-auto-label:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+}
+
+.btn-reset-zoom {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  color: white;
+}
+
+.btn-reset-zoom:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(240, 147, 251, 0.3);
 }
 
 .btn-accept-all {
