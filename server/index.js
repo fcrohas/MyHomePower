@@ -404,6 +404,38 @@ app.post('/api/export/day', async (req, res) => {
 
 // ===== ML ENDPOINTS =====
 
+// Get available tags from all data files
+app.get('/api/ml/available-tags', async (req, res) => {
+  try {
+    const dataDir = path.join(__dirname, '..', 'data')
+    const allTags = new Set()
+
+    // Read all tag files
+    const files = fs.readdirSync(dataDir)
+    const tagFiles = files.filter(f => f.startsWith('power-tags-') && f.endsWith('.json'))
+
+    for (const file of tagFiles) {
+      const filePath = path.join(dataDir, file)
+      const content = fs.readFileSync(filePath, 'utf8')
+      const tagData = JSON.parse(content)
+
+      if (tagData.entries && Array.isArray(tagData.entries)) {
+        for (const entry of tagData.entries) {
+          // Split comma-separated tags and trim
+          const tags = entry.label.split(',').map(tag => tag.trim())
+          tags.forEach(tag => allTags.add(tag))
+        }
+      }
+    }
+
+    const uniqueTags = Array.from(allTags).sort()
+    res.json({ tags: uniqueTags })
+  } catch (error) {
+    console.error('Failed to get available tags:', error)
+    res.status(500).json({ error: 'Failed to get available tags', message: error.message })
+  }
+})
+
 // Train ML model
 app.post('/api/ml/train', async (req, res) => {
   if (trainingInProgress) {
@@ -414,30 +446,43 @@ app.post('/api/ml/train', async (req, res) => {
     trainingInProgress = true
     trainingHistory = []
     
-    // Get model name from request body
-    const { name } = req.body
+    // Get model name, selected tags, date range, and early stopping config from request body
+    const { name, selectedTags, startDate, endDate, earlyStoppingEnabled, patience, minDelta, maxEpochs } = req.body
     const modelName = name || ''
+    const tagsToTrain = selectedTags && selectedTags.length > 0 ? selectedTags : null
 
     console.log('🧠 Starting ML model training...')
     if (modelName) {
       console.log(`   Model name: ${modelName}`)
     }
+    if (tagsToTrain) {
+      console.log(`   Selected tags (${tagsToTrain.length}): ${tagsToTrain.join(', ')}`)
+    } else {
+      console.log(`   Training on all available tags`)
+    }
+    if (startDate || endDate) {
+      console.log(`   Date range: ${startDate || 'any'} to ${endDate || 'any'}`)
+    }
+    if (earlyStoppingEnabled) {
+      console.log(`   Early stopping: enabled (patience=${patience || 5}, minDelta=${minDelta || 0.0001})`)
+    }
 
-    // Load all data from data folder
+    // Load all data from data folder with optional date filtering
     const dataDir = path.join(__dirname, '..', 'data')
-    const datasets = loadAllData(dataDir)
+    const datasets = loadAllData(dataDir, startDate, endDate)
 
     if (datasets.length === 0) {
       throw new Error('No training data found in data folder')
     }
 
-    // Prepare training data with 1-minute step for more training samples
+    // Prepare training data with 5-minute step to reduce data leakage
     const { xData, yData, uniqueTags, stats } = prepareTrainingData(
       datasets,
       5,  // numWindows (5 x 10min = 50min lookback)
       10, // windowSizeMinutes
       60, // pointsPerWindow
-      1   // stepSizeMinutes (1-minute step for data augmentation)
+      5,  // stepSizeMinutes (5-minute step to reduce overfitting)
+      tagsToTrain // selectedTags filter
     )
     mlTags = uniqueTags
     mlStats = stats
@@ -458,7 +503,7 @@ app.post('/api/ml/train', async (req, res) => {
     })
 
     // Training callback
-    const onEpochEnd = async (epoch, logs) => {
+    const onEpochEnd = async (epoch, logs, stoppedEarly) => {
       const acc = logs.binaryAccuracy || logs.acc || 0
       const valAcc = logs.val_binaryAccuracy || logs.val_acc || 0
       
@@ -467,7 +512,8 @@ app.post('/api/ml/train', async (req, res) => {
         loss: logs.loss,
         accuracy: acc,
         valLoss: logs.val_loss,
-        valAccuracy: valAcc
+        valAccuracy: valAcc,
+        stoppedEarly: stoppedEarly || false
       }
       trainingHistory.push(progress)
 
@@ -476,10 +522,16 @@ app.post('/api/ml/train', async (req, res) => {
     }
 
     // Train the model (more epochs for multi-label classification)
-    const epochs = 30
+    const epochs = parseInt(maxEpochs) || 30
     const batchSize = 32
+    
+    // Configure early stopping
+    const earlyStoppingConfig = earlyStoppingEnabled ? {
+      patience: parseInt(patience) || 5,
+      minDelta: parseFloat(minDelta) || 0.0001
+    } : null
 
-    await mlModel.train(xTrain, yTrain, xVal, yVal, epochs, batchSize, onEpochEnd)
+    await mlModel.train(xTrain, yTrain, xVal, yVal, epochs, batchSize, onEpochEnd, earlyStoppingConfig)
 
     // Save the model with unique ID
     const modelId = Date.now().toString()

@@ -1,0 +1,170 @@
+{
+  "id": "1765028486909",
+  "name": "Test 2 week",
+  "uniqueTags": [
+    "airfryer",
+    "climate",
+    "coffee",
+    "cooktop",
+    "dishwasher",
+    "fridge",
+    "heater",
+    "microwave",
+    "standby",
+    "washing machine",
+    "water heater"
+  ],
+  "stats": {
+    "minPower": null,
+    "maxPower": 7260
+  },
+  "trainedAt": "2025-12-06T13:41:26.932Z",
+  "trainingHistory": [
+    {
+      "epoch": 1,
+      "loss": 0.28775936365127563,
+      "accuracy": 0.8918682336807251,
+      "valLoss": 0.1965092122554779,
+      "valAccuracy": 0.9103614687919617,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 2,
+      "loss": 0.1985878348350525,
+      "accuracy": 0.9124427437782288,
+      "valLoss": 0.17515143752098083,
+      "valAccuracy": 0.9351968765258789,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 3,
+      "loss": 0.16620942950248718,
+      "accuracy": 0.9414263963699341,
+      "valLoss": 0.15037956833839417,
+      "valAccuracy": 0.9462862014770508,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 4,
+      "loss": 0.15151478350162506,
+      "accuracy": 0.9475812911987305,
+      "valLoss": 0.14338377118110657,
+      "valAccuracy": 0.9477879405021667,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 5,
+      "loss": 0.14576299488544464,
+      "accuracy": 0.9486216902732849,
+      "valLoss": 0.14144755899906158,
+      "valAccuracy": 0.951137900352478,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 6,
+      "loss": 0.14673857390880585,
+      "accuracy": 0.9488527178764343,
+      "valLoss": 0.13928255438804626,
+      "valAccuracy": 0.9502137899398804,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 7,
+      "loss": 0.14282913506031036,
+      "accuracy": 0.9504420757293701,
+      "valLoss": 0.13942478597164154,
+      "valAccuracy": 0.9490585327148438,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 8,
+      "loss": 0.14089374244213104,
+      "accuracy": 0.9518291354179382,
+      "valLoss": 0.14463664591312408,
+      "valAccuracy": 0.9490585923194885,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 9,
+      "loss": 0.1397886425256729,
+      "accuracy": 0.9523782730102539,
+      "valLoss": 0.13941490650177002,
+      "valAccuracy": 0.9500981569290161,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 10,
+      "loss": 0.14103402197360992,
+      "accuracy": 0.9503265023231506,
+      "valLoss": 0.1404525190591812,
+      "valAccuracy": 0.9528706073760986,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 11,
+      "loss": 0.1382981836795807,
+      "accuracy": 0.9522914886474609,
+      "valLoss": 0.13619375228881836,
+      "valAccuracy": 0.9492897391319275,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 12,
+      "loss": 0.13482457399368286,
+      "accuracy": 0.9537943005561829,
+      "valLoss": 0.129413902759552,
+      "valAccuracy": 0.9536792039871216,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 13,
+      "loss": 0.1294754445552826,
+      "accuracy": 0.9562501311302185,
+      "valLoss": 0.12271088361740112,
+      "valAccuracy": 0.9576066732406616,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 14,
+      "loss": 0.12680049240589142,
+      "accuracy": 0.9582731127738953,
+      "valLoss": 0.125590980052948,
+      "valAccuracy": 0.9580686688423157,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 15,
+      "loss": 0.12752017378807068,
+      "accuracy": 0.9576084613800049,
+      "valLoss": 0.12339422851800919,
+      "valAccuracy": 0.9580686092376709,
+      "stoppedEarly": false
+    }
+  ],
+  "datasetInfo": {
+    "numberOfDays": 14,
+    "dates": [
+      "2025-11-17",
+      "2025-11-18",
+      "2025-11-19",
+      "2025-11-20",
+      "2025-11-21",
+      "2025-11-22",
+      "2025-11-23",
+      "2025-11-24",
+      "2025-11-25",
+      "2025-11-26",
+      "2025-11-27",
+      "2025-11-28",
+      "2025-11-29",
+      "2025-11-30"
+    ],
+    "totalSamples": 3933
+  },
+  "finalMetrics": {
+    "loss": 0.12752017378807068,
+    "accuracy": 0.9576084613800049,
+    "valLoss": 0.12339422851800919,
+    "valAccuracy": 0.9580686092376709
+  }
+}

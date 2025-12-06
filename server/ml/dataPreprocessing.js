@@ -14,9 +14,11 @@ const __dirname = dirname(__filename)
 /**
  * Load all power data and tag files from the data folder
  * @param {string} dataDir - Path to data directory
+ * @param {string} startDate - Optional start date (YYYY-MM-DD)
+ * @param {string} endDate - Optional end date (YYYY-MM-DD)
  * @returns {Array} Array of {powerData, tagData, date}
  */
-export function loadAllData(dataDir) {
+export function loadAllData(dataDir, startDate = null, endDate = null) {
   const files = fs.readdirSync(dataDir)
   const powerFiles = files.filter(f => f.startsWith('power-data-'))
   const tagFiles = files.filter(f => f.startsWith('power-tags-'))
@@ -25,6 +27,11 @@ export function loadAllData(dataDir) {
 
   for (const powerFile of powerFiles) {
     const date = powerFile.match(/power-data-(\d{4}-\d{2}-\d{2})\.json/)[1]
+    
+    // Filter by date range if provided
+    if (startDate && date < startDate) continue
+    if (endDate && date > endDate) continue
+    
     const tagFile = `power-tags-${date}.json`
 
     if (tagFiles.includes(tagFile)) {
@@ -38,7 +45,11 @@ export function loadAllData(dataDir) {
     }
   }
 
-  console.log(`Loaded ${datasets.length} days of data`)
+  if (startDate || endDate) {
+    console.log(`Loaded ${datasets.length} days of data (filtered: ${startDate || 'any'} to ${endDate || 'any'})`)
+  } else {
+    console.log(`Loaded ${datasets.length} days of data`)
+  }
   return datasets
 }
 
@@ -180,7 +191,8 @@ export function prepareTrainingData(
   numWindows = 5,
   windowSizeMinutes = 10,
   pointsPerWindow = 60,
-  stepSizeMinutes = 1
+  stepSizeMinutes = 1,
+  selectedTags = null
 ) {
   console.log('Preparing training data...')
   console.log(`Using sliding window with step size: ${stepSizeMinutes} minutes`)
@@ -211,22 +223,59 @@ export function prepareTrainingData(
       ).toISOString()
       const tags = getTagsForTimestamp(targetTimestamp, tagData.entries)
 
-      // Add all tags to the set
-      tags.forEach(tag => allTags.add(tag))
-
-      allSamples.push({
-        inputWindows,
-        targetTags: tags
-      })
+      // If selectedTags filter is provided, only include samples with at least one selected tag
+      if (selectedTags && selectedTags.length > 0) {
+        const hasSelectedTag = tags.some(tag => selectedTags.includes(tag))
+        if (!hasSelectedTag) {
+          continue // Skip this sample
+        }
+        // Filter tags to only include selected ones
+        const filteredTags = tags.filter(tag => selectedTags.includes(tag))
+        if (filteredTags.length === 0) {
+          continue // Skip if no selected tags remain
+        }
+        // Add filtered tags to the set
+        filteredTags.forEach(tag => allTags.add(tag))
+        allSamples.push({
+          inputWindows,
+          targetTags: filteredTags
+        })
+      } else {
+        // Add all tags to the set
+        tags.forEach(tag => allTags.add(tag))
+        allSamples.push({
+          inputWindows,
+          targetTags: tags
+        })
+      }
     }
   }
 
   console.log(`Created ${allSamples.length} training samples`)
   console.log(`Unique tags: ${allTags.size}`)
+  
+  // Check for class imbalance
+  const tagCounts = {}
+  for (const sample of allSamples) {
+    for (const tag of sample.targetTags) {
+      tagCounts[tag] = (tagCounts[tag] || 0) + 1
+    }
+  }
+  
+  console.log('Tag distribution:')
+  Array.from(allTags).sort().forEach(tag => {
+    const count = tagCounts[tag] || 0
+    const percentage = ((count / allSamples.length) * 100).toFixed(1)
+    console.log(`  ${tag}: ${count} samples (${percentage}%)`)
+  })
 
-  // Calculate normalization parameters
-  const minPower = Math.min(...allPowerValues)
-  const maxPower = Math.max(...allPowerValues)
+  // Calculate normalization parameters without spread operator to avoid stack overflow
+  let minPower = Infinity
+  let maxPower = -Infinity
+  for (const power of allPowerValues) {
+    if (power < minPower) minPower = power
+    if (power > maxPower) maxPower = power
+  }
   console.log(`Power range: ${minPower}W - ${maxPower}W`)
 
   // Convert tags to array and create encoding map
@@ -293,17 +342,19 @@ export function createTensors(xData, yData, trainSplit = 0.8) {
   const xShuffled = indices.map(i => xData[i])
   const yShuffled = indices.map(i => yData[i])
 
-  // Split
+  // Split into train and validation
   const xTrainData = xShuffled.slice(0, splitIndex)
   const yTrainData = yShuffled.slice(0, splitIndex)
   const xValData = xShuffled.slice(splitIndex)
   const yValData = yShuffled.slice(splitIndex)
 
+  console.log(`Split: ${xTrainData.length} training, ${xValData.length} validation samples`)
+  
   // Flatten windows: [numSamples, numWindows, pointsPerWindow] -> [numSamples, numWindows * pointsPerWindow]
   const flattenWindows = (data) => {
     return data.map(sample => sample.flat())
   }
-
+  
   const xTrainFlat = flattenWindows(xTrainData)
   const xValFlat = flattenWindows(xValData)
 
