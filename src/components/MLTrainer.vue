@@ -43,6 +43,18 @@
       </div>
 
       <div class="training-controls">
+        <div class="model-name-input-group">
+          <label for="newModelName">Model Name (optional):</label>
+          <input 
+            id="newModelName"
+            v-model="newModelName"
+            :disabled="trainingInProgress"
+            class="model-name-input"
+            placeholder="e.g., Production Model v1"
+            maxlength="100"
+          />
+        </div>
+
         <button 
           @click="startTraining" 
           :disabled="trainingInProgress"
@@ -72,6 +84,7 @@
         <table class="models-table">
           <thead>
             <tr>
+              <th>Name</th>
               <th>Date</th>
               <th>Days</th>
               <th>Samples</th>
@@ -83,6 +96,24 @@
           </thead>
           <tbody>
             <tr v-for="model in savedModels" :key="model.id" :class="{ 'active-model': model.isActive }">
+              <td>
+                <div v-if="editingModelId === model.id" class="name-edit">
+                  <input 
+                    v-model="editingModelName"
+                    @keyup.enter="saveModelName(model.id)"
+                    @keyup.esc="cancelEditName"
+                    class="name-input"
+                    placeholder="Enter model name"
+                    ref="nameInput"
+                  />
+                  <button @click="saveModelName(model.id)" class="btn-icon" title="Save">✓</button>
+                  <button @click="cancelEditName" class="btn-icon" title="Cancel">✕</button>
+                </div>
+                <div v-else class="name-display">
+                  <span class="model-name">{{ model.name || 'Unnamed Model' }}</span>
+                  <button @click="startEditName(model.id, model.name)" class="btn-icon-edit" title="Edit name">✏️</button>
+                </div>
+              </td>
               <td>{{ formatDate(model.trainedAt) }}</td>
               <td>{{ model.datasetInfo?.numberOfDays || 'N/A' }}</td>
               <td>{{ model.datasetInfo?.totalSamples?.toLocaleString() || 'N/A' }}</td>
@@ -187,7 +218,11 @@ export default {
       trainingMetadata: null,
       savedModels: [],
       loadingModel: false,
-      deletingModel: false
+      deletingModel: false,
+      editingModelId: null,
+      editingModelName: '',
+      savingModelName: false,
+      newModelName: ''
     }
   },
   computed: {
@@ -337,6 +372,58 @@ export default {
       return 'accuracy-low'
     },
 
+    startEditName(modelId, currentName) {
+      this.editingModelId = modelId
+      this.editingModelName = currentName || ''
+      this.$nextTick(() => {
+        const inputs = this.$refs.nameInput
+        if (inputs) {
+          const input = Array.isArray(inputs) ? inputs[0] : inputs
+          if (input) input.focus()
+        }
+      })
+    },
+
+    cancelEditName() {
+      this.editingModelId = null
+      this.editingModelName = ''
+    },
+
+    async saveModelName(modelId) {
+      if (this.savingModelName) return
+
+      this.savingModelName = true
+      this.error = null
+
+      try {
+        const response = await fetch(`http://localhost:3001/api/ml/models/${modelId}/name`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ name: this.editingModelName })
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to update model name')
+        }
+
+        // Update local state
+        const model = this.savedModels.find(m => m.id === modelId)
+        if (model) {
+          model.name = this.editingModelName
+        }
+
+        this.cancelEditName()
+        console.log('✅ Model name updated successfully')
+      } catch (err) {
+        this.error = 'Failed to update model name: ' + err.message
+        console.error('Update model name error:', err)
+      } finally {
+        this.savingModelName = false
+      }
+    },
+
     formatDate(isoString) {
       if (!isoString) return 'N/A'
       try {
@@ -365,7 +452,8 @@ export default {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
-          }
+          },
+          body: JSON.stringify({ name: this.newModelName })
         })
 
         if (!response.ok) {
@@ -401,6 +489,7 @@ export default {
                 if (data.done) {
                   this.trainingInProgress = false
                   this.modelTrained = true
+                  this.newModelName = '' // Clear the input after successful training
                   // Refresh models list
                   this.loadModelsList()
                   // Reload status to get latest metadata
@@ -792,8 +881,40 @@ export default {
 .training-controls {
   display: flex;
   gap: 10px;
-  align-items: center;
+  align-items: flex-end;
   flex-wrap: wrap;
+}
+
+.model-name-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 250px;
+}
+
+.model-name-input-group label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #555;
+}
+
+.model-name-input {
+  padding: 10px 14px;
+  border: 2px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: border-color 0.2s;
+}
+
+.model-name-input:focus {
+  outline: none;
+  border-color: #42b983;
+}
+
+.model-name-input:disabled {
+  background-color: #f5f5f5;
+  cursor: not-allowed;
 }
 
 .btn {
@@ -1027,6 +1148,73 @@ export default {
 .actions-cell {
   display: flex;
   gap: 8px;
+}
+
+.name-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-name {
+  font-weight: 500;
+  color: #333;
+}
+
+.btn-icon-edit {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+  font-size: 14px;
+}
+
+.btn-icon-edit:hover {
+  opacity: 1;
+}
+
+.name-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.name-input {
+  padding: 6px 10px;
+  border: 1px solid #42b983;
+  border-radius: 4px;
+  font-size: 14px;
+  outline: none;
+  min-width: 150px;
+}
+
+.name-input:focus {
+  border-color: #35a372;
+  box-shadow: 0 0 0 2px rgba(66, 185, 131, 0.1);
+}
+
+.btn-icon {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 16px;
+  font-weight: bold;
+  transition: transform 0.1s;
+}
+
+.btn-icon:hover {
+  transform: scale(1.1);
+}
+
+.btn-icon:first-of-type {
+  color: #42b983;
+}
+
+.btn-icon:last-of-type {
+  color: #dc3545;
 }
 
 .btn-small {

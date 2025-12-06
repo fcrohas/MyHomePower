@@ -247,5 +247,6 @@
     "accuracy": 0.989287257194519,
     "valLoss": 0.03423551097512245,
     "valAccuracy": 0.9894182682037354
-  }
+  },
+  "name": "Latest with more devices"
 }

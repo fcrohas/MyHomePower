@@ -413,8 +413,15 @@ app.post('/api/ml/train', async (req, res) => {
   try {
     trainingInProgress = true
     trainingHistory = []
+    
+    // Get model name from request body
+    const { name } = req.body
+    const modelName = name || ''
 
     console.log('🧠 Starting ML model training...')
+    if (modelName) {
+      console.log(`   Model name: ${modelName}`)
+    }
 
     // Load all data from data folder
     const dataDir = path.join(__dirname, '..', 'data')
@@ -491,6 +498,7 @@ app.post('/api/ml/train', async (req, res) => {
     // Save metadata
     const metadata = {
       id: modelId,
+      name: modelName,
       uniqueTags: mlTags,
       stats: mlStats,
       trainedAt: new Date().toISOString(),
@@ -589,6 +597,7 @@ app.get('/api/ml/models', (req, res) => {
           const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
           models.push({
             id: modelId,
+            name: metadata.name || '',
             trainedAt: metadata.trainedAt,
             uniqueTags: metadata.uniqueTags,
             datasetInfo: metadata.datasetInfo,
@@ -653,6 +662,47 @@ app.post('/api/ml/models/load', async (req, res) => {
   } catch (error) {
     console.error('Error loading model:', error)
     res.status(500).json({ error: 'Failed to load model', message: error.message })
+  }
+})
+
+// Update model name
+app.patch('/api/ml/models/:modelId/name', (req, res) => {
+  try {
+    const { modelId } = req.params
+    const { name } = req.body
+
+    if (!modelId) {
+      return res.status(400).json({ error: 'modelId is required' })
+    }
+
+    const modelsDir = path.join(__dirname, 'ml', 'models')
+    const modelPath = path.join(modelsDir, modelId)
+    const metadataPath = path.join(modelPath, 'metadata.json')
+
+    if (!fs.existsSync(metadataPath)) {
+      return res.status(404).json({ error: 'Model not found' })
+    }
+
+    // Load metadata
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+    
+    // Update name
+    metadata.name = name || ''
+    
+    // Save updated metadata
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2))
+
+    // Update in-memory metadata if this is the current model
+    if (modelId === currentModelId && trainingMetadata) {
+      trainingMetadata.name = name || ''
+    }
+
+    console.log(`✏️ Updated model ${modelId} name to: ${name}`)
+
+    res.json({ success: true, message: 'Model name updated successfully', name })
+  } catch (error) {
+    console.error('Error updating model name:', error)
+    res.status(500).json({ error: 'Failed to update model name', message: error.message })
   }
 })
 
