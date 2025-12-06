@@ -93,6 +93,7 @@
             :currentDate="selectedDate"
             @range-selected="onRangeSelected"
             @add-tag="addTag"
+            @update-tag="updateTag"
           />
         </div>
 
@@ -154,6 +155,14 @@
       <!-- Loading/Status -->
       <div v-if="loading" class="loading">Loading data...</div>
     </div>
+
+    <!-- Toast Notification -->
+    <transition name="toast">
+      <div v-if="toast.show" :class="['toast', toast.type]">
+        <span class="toast-icon">{{ toast.icon }}</span>
+        <span class="toast-message">{{ toast.message }}</span>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -178,6 +187,14 @@ const loading = ref(false)
 
 // Tab management
 const activeTab = ref('tagging')
+
+// Toast notification state
+const toast = ref({
+  show: false,
+  message: '',
+  type: 'success', // 'success' or 'error'
+  icon: ''
+})
 
 // Date management
 const selectedDate = ref(format(new Date(), 'yyyy-MM-dd'))
@@ -326,6 +343,14 @@ const addTag = (tag) => {
   }
 }
 
+const updateTag = (updatedTag) => {
+  const index = tags.value.findIndex(t => t.id === updatedTag.id)
+  if (index !== -1) {
+    tags.value[index] = updatedTag
+    saveTags()
+  }
+}
+
 const deleteTag = (tagId) => {
   tags.value = tags.value.filter(t => t.id !== tagId)
   saveTags()
@@ -463,6 +488,18 @@ const getLabelColor = (label) => {
   return '#42b983' // fallback color
 }
 
+// Toast notification function
+const showToast = (message, type = 'success') => {
+  toast.value.message = message
+  toast.value.type = type
+  toast.value.icon = type === 'success' ? '✓' : '✕'
+  toast.value.show = true
+  
+  setTimeout(() => {
+    toast.value.show = false
+  }, 3000)
+}
+
 // Export current day data
 const exportCurrentDay = async () => {
   if (filteredTags.value.length === 0) {
@@ -475,11 +512,11 @@ const exportCurrentDay = async () => {
   try {
     const result = await exportDay(selectedDate.value, tags.value)
     console.log(`✅ Saved ${result.entries} entries to ${result.filename}`)
-    alert(`Success! Saved ${result.entries} entries to ${result.filename}`)
+    showToast(`Saved ${result.entries} entries to ${result.filename}`, 'success')
   } catch (err) {
     error.value = 'Failed to export: ' + err.message
     console.error('Export error:', err)
-    alert('Failed to export: ' + err.message)
+    showToast('Failed to export: ' + err.message, 'error')
   } finally {
     loading.value = false
   }
@@ -800,6 +837,80 @@ button:disabled {
   
   .viewer-container {
     padding: 1rem;
+  }
+}
+
+/* Toast Notification Styles */
+.toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-weight: 500;
+  z-index: 9999;
+  min-width: 300px;
+  max-width: 500px;
+}
+
+.toast.success {
+  background: #42b983;
+  color: white;
+}
+
+.toast.error {
+  background: #dc3545;
+  color: white;
+}
+
+.toast-icon {
+  font-size: 1.5rem;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+}
+
+.toast-message {
+  flex: 1;
+}
+
+/* Toast Animation */
+.toast-enter-active {
+  animation: toast-in 0.3s ease-out;
+}
+
+.toast-leave-active {
+  animation: toast-out 0.3s ease-in;
+}
+
+@keyframes toast-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes toast-out {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
   }
 }
 </style>

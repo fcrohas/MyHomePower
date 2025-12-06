@@ -97,7 +97,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['range-selected', 'add-tag'])
+const emit = defineEmits(['range-selected', 'add-tag', 'update-tag'])
 
 // Auto Label Feature
 const showAutoLabelSettings = ref(false)
@@ -117,6 +117,10 @@ let isSelecting = false
 let selectionStart = null
 let selectionStartX = null
 let crosshairX = null
+let isDraggingTag = false
+let draggedTag = null
+let draggedBoundary = null // 'start' or 'end'
+let dragThreshold = 10 // pixels
 
 // Custom crosshair plugin
 const crosshairPlugin = {
@@ -407,6 +411,38 @@ const getTagColorByLabel = (label) => {
 const handleMouseDown = (event) => {
   if (!chartInstance) return
   
+  const rect = chartCanvas.value.getBoundingClientRect()
+  const mouseX = event.clientX - rect.left
+  
+  // Check if clicking near a tag boundary
+  const tagsForToday = props.tags.filter(tag => tag.date === props.currentDate)
+  for (const tag of tagsForToday) {
+    const startTime = new Date(tag.date + 'T' + tag.startTime)
+    const endTime = new Date(tag.date + 'T' + tag.endTime)
+    
+    const startPixel = chartInstance.scales.x.getPixelForValue(startTime)
+    const endPixel = chartInstance.scales.x.getPixelForValue(endTime)
+    
+    // Check if near start boundary
+    if (Math.abs(mouseX - startPixel) < dragThreshold) {
+      isDraggingTag = true
+      draggedTag = tag
+      draggedBoundary = 'start'
+      chartCanvas.value.style.cursor = 'ew-resize'
+      return
+    }
+    
+    // Check if near end boundary
+    if (Math.abs(mouseX - endPixel) < dragThreshold) {
+      isDraggingTag = true
+      draggedTag = tag
+      draggedBoundary = 'end'
+      chartCanvas.value.style.cursor = 'ew-resize'
+      return
+    }
+  }
+  
+  // If not dragging a tag, start normal selection
   const points = chartInstance.getElementsAtEventForMode(
     event,
     'index',
@@ -420,7 +456,6 @@ const handleMouseDown = (event) => {
     selectionStart = props.data[index]?.x
     
     // Store the X pixel position for drawing
-    const rect = chartCanvas.value.getBoundingClientRect()
     selectionStartX = event.clientX - rect.left
   }
 }
@@ -428,19 +463,94 @@ const handleMouseDown = (event) => {
 const handleMouseMove = (event) => {
   if (!chartInstance) return
   
-  // Update crosshair position
   const rect = chartCanvas.value.getBoundingClientRect()
   const x = event.clientX - rect.left
   crosshairX = x
+  
+  // If dragging a tag boundary, update the chart
+  if (isDraggingTag) {
+    chartInstance.update('none')
+    return
+  }
+  
   chartInstance.update('none')
   
   if (isSelecting) {
     chartCanvas.value.style.cursor = 'crosshair'
+    return
   }
+  
+  // Check if hovering near a tag boundary to show resize cursor
+  const tagsForToday = props.tags.filter(tag => tag.date === props.currentDate)
+  let nearBoundary = false
+  
+  for (const tag of tagsForToday) {
+    const startTime = new Date(tag.date + 'T' + tag.startTime)
+    const endTime = new Date(tag.date + 'T' + tag.endTime)
+    
+    const startPixel = chartInstance.scales.x.getPixelForValue(startTime)
+    const endPixel = chartInstance.scales.x.getPixelForValue(endTime)
+    
+    if (Math.abs(x - startPixel) < dragThreshold || Math.abs(x - endPixel) < dragThreshold) {
+      nearBoundary = true
+      break
+    }
+  }
+  
+  chartCanvas.value.style.cursor = nearBoundary ? 'ew-resize' : 'default'
 }
 
 const handleMouseUp = (event) => {
-  if (!isSelecting || !chartInstance) return
+  if (!chartInstance) return
+  
+  // Handle tag dragging
+  if (isDraggingTag && draggedTag && draggedBoundary) {
+    const points = chartInstance.getElementsAtEventForMode(
+      event,
+      'index',
+      { intersect: false },
+      true
+    )
+    
+    if (points.length > 0) {
+      const index = points[0].index
+      const newTime = props.data[index]?.x
+      
+      if (newTime) {
+        const newTimeObj = new Date(newTime)
+        const newTimeStr = newTimeObj.toTimeString().split(' ')[0] // HH:MM:SS format
+        
+        // Create updated tag
+        const updatedTag = { ...draggedTag }
+        
+        if (draggedBoundary === 'start') {
+          const endTime = new Date(draggedTag.date + 'T' + draggedTag.endTime)
+          // Ensure start time is before end time
+          if (newTimeObj < endTime) {
+            updatedTag.startTime = newTimeStr
+          }
+        } else {
+          const startTime = new Date(draggedTag.date + 'T' + draggedTag.startTime)
+          // Ensure end time is after start time
+          if (newTimeObj > startTime) {
+            updatedTag.endTime = newTimeStr
+          }
+        }
+        
+        emit('update-tag', updatedTag)
+      }
+    }
+    
+    isDraggingTag = false
+    draggedTag = null
+    draggedBoundary = null
+    chartCanvas.value.style.cursor = 'default'
+    chartInstance.update('none')
+    return
+  }
+  
+  // Handle normal selection
+  if (!isSelecting) return
   
   const points = chartInstance.getElementsAtEventForMode(
     event,
@@ -473,6 +583,9 @@ const handleMouseLeave = () => {
   selectionStart = null
   selectionStartX = null
   crosshairX = null
+  isDraggingTag = false
+  draggedTag = null
+  draggedBoundary = null
   if (chartCanvas.value) {
     chartCanvas.value.style.cursor = 'default'
   }
