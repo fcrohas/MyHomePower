@@ -481,7 +481,7 @@ app.post('/api/ml/train', async (req, res) => {
       5,  // numWindows (5 x 10min = 50min lookback)
       10, // windowSizeMinutes
       60, // pointsPerWindow
-      5,  // stepSizeMinutes (5-minute step to reduce overfitting)
+      1,  // stepSizeMinutes (1-minute step to reduce overfitting)
       tagsToTrain // selectedTags filter
     )
     mlTags = uniqueTags

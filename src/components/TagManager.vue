@@ -326,26 +326,7 @@ const labelCounts = computed(() => {
 
 // Format time for display
 const formatTime = (date) => {
-  if (tagToDelete.value === tagId) {
-    // Second click confirms deletion
-    emit('delete-tag', tagId)
-    tagToDelete.value = null
-    if (props.showToast) {
-      props.showToast('Tag deleted successfully', 'success')
-    }
-  } else {
-    // First click - mark for deletion
-    tagToDelete.value = tagId
-    if (props.showToast) {
-      props.showToast('Click again to confirm deletion', 'info')
-    }
-    // Reset after 3 seconds
-    setTimeout(() => {
-      if (tagToDelete.value === tagId) {
-        tagToDelete.value = null
-      }
-    }, 3000)
-  }
+  return format(new Date(date), 'HH:mm')
 }
 
 // Watch for range selection
@@ -387,13 +368,25 @@ const cancel = () => {
 
 // Delete tag
 const deleteTagHandler = (tagId) => {
-  const tag = props.tags.find(t => t.id === tagId)
-  emit('delete-tag', tagId)
-  
-  if (tag?.isPrediction) {
-    showToast('Prediction removed', 'info')
+  if (tagToDelete.value === tagId) {
+    // Second click confirms deletion
+    emit('delete-tag', tagId)
+    tagToDelete.value = null
+    if (props.showToast) {
+      props.showToast('Tag deleted successfully', 'success')
+    }
   } else {
-    showToast('Tag deleted', 'success')
+    // First click - mark for deletion
+    tagToDelete.value = tagId
+    if (props.showToast) {
+      props.showToast('Click again to confirm deletion', 'info')
+    }
+    // Reset after 3 seconds
+    setTimeout(() => {
+      if (tagToDelete.value === tagId) {
+        tagToDelete.value = null
+      }
+    }, 3000)
   }
 }
 
