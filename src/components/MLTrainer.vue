@@ -281,7 +281,8 @@ export default {
       try {
         const response = await fetch('http://localhost:3001/api/ml/models')
         const data = await response.json()
-        this.savedModels = data.models || []
+        // Handle both array and object response formats
+        this.savedModels = Array.isArray(data) ? data : (data.models || [])
       } catch (err) {
         console.error('Failed to load models list:', err)
       }

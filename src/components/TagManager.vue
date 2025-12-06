@@ -102,7 +102,17 @@
     <div class="scrollable-content" v-show="isExpanded">
     <!-- Tags List -->
     <div class="tags-list">
-      <h3>Tagged Periods ({{ filteredTags.length }})</h3>
+      <div class="tags-header">
+        <h3>Tagged Periods ({{ filteredTags.length }})</h3>
+        <div v-if="predictionCount > 0" class="prediction-actions">
+          <button @click="acceptAllPredictions" class="btn-accept-predictions" title="Accept all predictions">
+            ✓ Accept {{ predictionCount }} predictions
+          </button>
+          <button @click="clearAllPredictions" class="btn-clear-predictions" title="Remove all predictions">
+            ✕ Clear predictions
+          </button>
+        </div>
+      </div>
       
       <div v-if="filteredTags.length === 0" class="empty-state">
         No tags for this day. Select a time range on the chart to add a tag.
@@ -113,17 +123,23 @@
           v-for="tag in filteredTags" 
           :key="tag.id" 
           class="tag-item"
+          :class="{ 'tag-prediction': tag.isPrediction }"
         >
           <div class="tag-info">
             <span class="tag-time">
               {{ tag.startTime }} - {{ tag.endTime }}
             </span>
-            <span class="tag-label">{{ tag.label }}</span>
+            <span class="tag-label">
+              {{ tag.label }}
+              <span v-if="tag.isPrediction && tag.confidence" class="confidence-badge">
+                {{ (tag.confidence * 100).toFixed(0) }}%
+              </span>
+            </span>
           </div>
           <button 
             @click="deleteTagHandler(tag.id)" 
             class="btn-delete"
-            title="Delete tag"
+            :title="tag.isPrediction ? 'Remove prediction' : 'Delete tag'"
           >
             ✕
           </button>
@@ -200,6 +216,11 @@
         </div>
       </div>
     </div>
+    
+    <!-- Toast Notification -->
+    <div v-if="toast.show" class="toast" :class="`toast-${toast.type}`">
+      {{ toast.message }}
+    </div>
   </div>
 </template>
 
@@ -224,6 +245,20 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['add-tag', 'delete-tag', 'clear-selection', 'sensors-changed'])
+
+// Toast notifications
+const toast = ref({
+  show: false,
+  message: '',
+  type: 'success' // 'success', 'error', 'info'
+})
+
+const showToast = (message, type = 'success') => {
+  toast.value = { show: true, message, type }
+  setTimeout(() => {
+    toast.value.show = false
+  }, 3000)
+}
 
 // Accordion state - collapsed by default
 const isExpanded = ref(false)
@@ -256,6 +291,11 @@ const filteredTags = computed(() => {
   return props.tags
     .filter(tag => tag.date === props.currentDate)
     .sort((a, b) => a.startTime.localeCompare(b.startTime))
+})
+
+// Count predictions
+const predictionCount = computed(() => {
+  return filteredTags.value.filter(tag => tag.isPrediction).length
 })
 
 // Get unique labels from all tags for autocomplete
@@ -321,9 +361,46 @@ const cancel = () => {
 
 // Delete tag
 const deleteTagHandler = (tagId) => {
-  if (confirm('Are you sure you want to delete this tag?')) {
-    emit('delete-tag', tagId)
+  const tag = props.tags.find(t => t.id === tagId)
+  emit('delete-tag', tagId)
+  
+  if (tag?.isPrediction) {
+    showToast('Prediction removed', 'info')
+  } else {
+    showToast('Tag deleted', 'success')
   }
+}
+
+// Accept all predictions - convert them to regular tags
+const acceptAllPredictions = () => {
+  const predictions = filteredTags.value.filter(tag => tag.isPrediction)
+  const count = predictions.length
+  
+  predictions.forEach(pred => {
+    // Delete the prediction
+    emit('delete-tag', pred.id)
+    // Re-add as confirmed tag
+    emit('add-tag', {
+      startTime: pred.startTime,
+      endTime: pred.endTime,
+      label: pred.label,
+      isPrediction: false
+    })
+  })
+  
+  showToast(`${count} predictions accepted`, 'success')
+}
+
+// Clear all predictions
+const clearAllPredictions = () => {
+  const predictions = filteredTags.value.filter(tag => tag.isPrediction)
+  const count = predictions.length
+  
+  predictions.forEach(pred => {
+    emit('delete-tag', pred.id)
+  })
+  
+  showToast(`${count} predictions cleared`, 'info')
 }
 
 // Load sensors from Home Assistant
@@ -669,6 +746,53 @@ watch(() => props.currentDate, () => {
   margin-bottom: 1.5rem;
 }
 
+.tags-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.tags-header h3 {
+  margin: 0;
+}
+
+.prediction-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn-accept-predictions,
+.btn-clear-predictions {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.btn-accept-predictions {
+  background: #42b983;
+  color: white;
+}
+
+.btn-accept-predictions:hover {
+  background: #369970;
+}
+
+.btn-clear-predictions {
+  background: #ff9800;
+  color: white;
+}
+
+.btn-clear-predictions:hover {
+  background: #f57c00;
+}
+
 .empty-state {
   text-align: center;
   padding: 2rem;
@@ -693,6 +817,12 @@ watch(() => props.currentDate, () => {
   transition: transform 0.2s, box-shadow 0.2s;
 }
 
+.tag-item.tag-prediction {
+  background: #fff8e1;
+  border-left: 4px dashed #ffa726;
+  border-style: dashed;
+}
+
 .tag-item:hover {
   transform: translateX(4px);
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
@@ -714,6 +844,18 @@ watch(() => props.currentDate, () => {
   font-weight: 600;
   color: #2c3e50;
   font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.confidence-badge {
+  background: #ffa726;
+  color: white;
+  padding: 0.2rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
 }
 
 .btn-delete {
@@ -960,6 +1102,43 @@ watch(() => props.currentDate, () => {
 
 .btn-primary:hover {
   background: #369970;
+}
+
+/* Toast Notification */
+.toast {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  color: white;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 10000;
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(400px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.toast-success {
+  background: #42b983;
+}
+
+.toast-error {
+  background: #dc3545;
+}
+
+.toast-info {
+  background: #17a2b8;
 }
 
 @media (max-width: 768px) {

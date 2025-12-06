@@ -613,7 +613,7 @@ app.get('/api/ml/models', (req, res) => {
     // Sort by trained date (newest first)
     models.sort((a, b) => new Date(b.trainedAt) - new Date(a.trainedAt))
 
-    res.json({ models, currentModelId })
+    res.json(models)
   } catch (error) {
     console.error('Error listing models:', error)
     res.status(500).json({ error: 'Failed to list models', message: error.message })

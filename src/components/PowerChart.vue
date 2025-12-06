@@ -1,8 +1,67 @@
 <template>
   <div class="chart-wrapper">
+    <div class="chart-controls">
+      <button @click="showAutoLabelSettings = true" class="btn-auto-label" title="Auto Label with ML">
+        🤖 Auto Labels
+      </button>
+    </div>
     <canvas ref="chartCanvas"></canvas>
     <div class="chart-instructions" v-if="!selectedRange">
       Click and drag on the chart to select a time range for tagging
+    </div>
+    
+    <!-- Auto Label Settings Dialog -->
+    <div v-if="showAutoLabelSettings" class="modal-overlay" @click.self="showAutoLabelSettings = false">
+      <div class="modal-content">
+        <h3>Auto Label Settings</h3>
+        
+        <div class="form-group">
+          <label>Model:</label>
+          <select v-model="autoLabelSettings.modelId">
+            <option value="" disabled>-- Select a model --</option>
+            <option v-for="model in availableModels" :key="model.id" :value="model.id">
+              {{ model.name || `Model ${model.id}` }} ({{ formatModelDate(model.trainedAt) }})
+            </option>
+          </select>
+        </div>
+        
+        <div class="form-group">
+          <label>Confidence Threshold: {{ autoLabelSettings.threshold }}</label>
+          <input 
+            type="range" 
+            v-model.number="autoLabelSettings.threshold" 
+            min="0.1" 
+            max="0.9" 
+            step="0.05"
+          />
+          <small>Tags with confidence below this threshold will be filtered out</small>
+        </div>
+        
+        <div class="form-group">
+          <label>Sliding Window Size (minutes): {{ autoLabelSettings.stepSize }}</label>
+          <input 
+            type="range" 
+            v-model.number="autoLabelSettings.stepSize" 
+            min="5" 
+            max="30" 
+            step="5"
+          />
+          <small>Smaller values = more predictions, larger values = faster processing</small>
+        </div>
+        
+        <div class="form-actions">
+          <button @click="runAutoLabel" :disabled="isAutoLabeling" class="btn-primary">
+            {{ isAutoLabeling ? 'Processing...' : 'Generate Labels' }}
+          </button>
+          <button @click="showAutoLabelSettings = false" class="btn-secondary">
+            Cancel
+          </button>
+        </div>
+        
+        <div v-if="autoLabelError" class="error-message">
+          {{ autoLabelError }}
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -34,7 +93,19 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['range-selected'])
+const emit = defineEmits(['range-selected', 'add-tag'])
+
+// Auto Label Feature
+const showAutoLabelSettings = ref(false)
+const autoLabelSettings = ref({
+  modelId: '',
+  threshold: 0.3,
+  stepSize: 10
+})
+const predictedTags = ref([])
+const availableModels = ref([])
+const isAutoLabeling = ref(false)
+const autoLabelError = ref('')
 
 const chartCanvas = ref(null)
 let chartInstance = null
@@ -383,9 +454,180 @@ const handleMouseLeave = () => {
   }
 }
 
+// Auto Label Methods
+const loadAvailableModels = async () => {
+  try {
+    const response = await fetch('http://localhost:3001/api/ml/models')
+    if (response.ok) {
+      const models = await response.json()
+      // Handle both array and object response formats
+      availableModels.value = Array.isArray(models) ? models : (models.models || [])
+      availableModels.value.sort((a, b) => b.trainedAt.localeCompare(a.trainedAt))
+    }
+  } catch (error) {
+    console.error('Failed to load models:', error)
+  }
+}
+
+const runAutoLabel = async () => {
+  if (!props.data || props.data.length === 0) {
+    autoLabelError.value = 'No power data available'
+    return
+  }
+  
+  isAutoLabeling.value = true
+  autoLabelError.value = ''
+  
+  try {
+    // Load the selected model first if specified
+    if (autoLabelSettings.value.modelId) {
+      const loadResponse = await fetch('http://localhost:3001/api/ml/models/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelId: autoLabelSettings.value.modelId })
+      })
+      
+      if (!loadResponse.ok) {
+        throw new Error('Failed to load selected model')
+      }
+    }
+    
+    // Prepare power data
+    const powerData = props.data.map(point => ({
+      timestamp: new Date(point.x).toISOString(),
+      value: point.y
+    }))
+    
+    // Call the sliding window prediction API
+    const response = await fetch('http://localhost:3001/api/ml/predict-day-sliding', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        date: props.currentDate,
+        powerData: powerData,
+        stepSize: autoLabelSettings.value.stepSize,
+        threshold: autoLabelSettings.value.threshold
+      })
+    })
+    
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.error || 'Prediction failed')
+    }
+    
+    const result = await response.json()
+    const predictions = result.predictions || []
+    
+    console.log(`Generated ${predictions.length} predicted tags`)
+    
+    // Add predictions as tags with isPrediction flag
+    // For multi-label predictions, create separate tags for each label
+    // Filter out "Standby" labels and merge contiguous predictions
+    
+    // First, expand multi-label predictions into individual entries
+    const expandedPredictions = []
+    predictions.forEach(prediction => {
+      if (prediction.tags && prediction.tags.length > 1) {
+        // Multi-label: create an entry for each label (excluding Standby)
+        prediction.tags.forEach(tagItem => {
+          if (tagItem.tag.toLowerCase() !== 'standby') {
+            expandedPredictions.push({
+              startTime: prediction.startTime,
+              endTime: prediction.endTime,
+              label: tagItem.tag,
+              confidence: tagItem.probability
+            })
+          }
+        })
+      } else {
+        // Single label (skip if it's Standby)
+        if (prediction.tag.toLowerCase() !== 'standby') {
+          expandedPredictions.push({
+            startTime: prediction.startTime,
+            endTime: prediction.endTime,
+            label: prediction.tag,
+            confidence: prediction.confidence
+          })
+        }
+      }
+    })
+    
+    // Sort by label then by start time
+    expandedPredictions.sort((a, b) => {
+      if (a.label !== b.label) return a.label.localeCompare(b.label)
+      return a.startTime.localeCompare(b.startTime)
+    })
+    
+    // Merge contiguous predictions with the same label
+    const mergedPredictions = []
+    let currentMerge = null
+    
+    expandedPredictions.forEach(pred => {
+      if (!currentMerge || currentMerge.label !== pred.label || currentMerge.endTime !== pred.startTime) {
+        // Start a new merge group
+        if (currentMerge) {
+          mergedPredictions.push(currentMerge)
+        }
+        currentMerge = {
+          startTime: pred.startTime,
+          endTime: pred.endTime,
+          label: pred.label,
+          confidence: pred.confidence,
+          count: 1
+        }
+      } else {
+        // Extend the current merge group
+        currentMerge.endTime = pred.endTime
+        currentMerge.confidence = (currentMerge.confidence * currentMerge.count + pred.confidence) / (currentMerge.count + 1)
+        currentMerge.count++
+      }
+    })
+    
+    // Don't forget the last merge group
+    if (currentMerge) {
+      mergedPredictions.push(currentMerge)
+    }
+    
+    console.log(`After filtering and merging: ${mergedPredictions.length} tags`)
+    
+    // Add merged predictions as tags
+    mergedPredictions.forEach(pred => {
+      emit('add-tag', {
+        startTime: pred.startTime,
+        endTime: pred.endTime,
+        label: pred.label,
+        isPrediction: true,
+        confidence: pred.confidence
+      })
+    })
+    
+    // Close settings dialog
+    showAutoLabelSettings.value = false
+    
+  } catch (error) {
+    console.error('Auto label error:', error)
+    autoLabelError.value = error.message || 'Failed to generate auto labels'
+  } finally {
+    isAutoLabeling.value = false
+  }
+}
+
+const formatModelDate = (isoDate) => {
+  if (!isoDate) return 'Unknown'
+  const date = new Date(isoDate)
+  return date.toLocaleString('en-US', { 
+    month: 'short', 
+    day: 'numeric', 
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
 onMounted(async () => {
   await nextTick()
   createChart()
+  await loadAvailableModels()
 })
 
 watch(() => props.data, () => {
@@ -407,6 +649,52 @@ watch(() => [props.tags, props.selectedRange], () => {
   min-height: 400px;
 }
 
+.chart-controls {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  align-items: center;
+}
+
+.btn-auto-label,
+.btn-accept-all,
+.btn-clear {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.btn-auto-label {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.btn-auto-label:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+}
+
+.btn-accept-all {
+  background: #42b983;
+  color: white;
+}
+
+.btn-accept-all:hover {
+  background: #359268;
+}
+
+.btn-clear {
+  background: #dc3545;
+  color: white;
+}
+
+.btn-clear:hover {
+  background: #c82333;
+}
+
 canvas {
   max-width: 100%;
   cursor: default;
@@ -418,5 +706,117 @@ canvas {
   color: #666;
   font-size: 0.9rem;
   font-style: italic;
+}
+
+/* Modal Styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  padding: 2rem;
+  border-radius: 8px;
+  max-width: 500px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+.modal-content h3 {
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+  color: #2c3e50;
+}
+
+.form-group {
+  margin-bottom: 1.5rem;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.form-group select,
+.form-group input[type="range"] {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.form-group input[type="range"] {
+  padding: 0;
+}
+
+.form-group small {
+  display: block;
+  margin-top: 0.3rem;
+  color: #666;
+  font-size: 0.85rem;
+}
+
+.form-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+}
+
+.btn-primary,
+.btn-secondary {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  background: #42b983;
+  color: white;
+  flex: 1;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #359268;
+}
+
+.btn-primary:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: #6c757d;
+  color: white;
+}
+
+.btn-secondary:hover {
+  background: #5a6268;
+}
+
+.error-message {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: #f8d7da;
+  border: 1px solid #f5c6cb;
+  border-radius: 4px;
+  color: #721c24;
+  font-size: 0.9rem;
 }
 </style>

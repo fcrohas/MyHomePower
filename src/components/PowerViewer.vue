@@ -92,6 +92,7 @@
             :selectedRange="selectedRange"
             :currentDate="selectedDate"
             @range-selected="onRangeSelected"
+            @add-tag="addTag"
           />
         </div>
 
@@ -311,14 +312,18 @@ const onRangeSelected = (range) => {
 
 const addTag = (tag) => {
   tags.value.push({
-    id: Date.now(),
+    id: Date.now() + Math.random(), // Ensure unique ID for predictions
     date: selectedDate.value,
     startTime: tag.startTime,
     endTime: tag.endTime,
-    label: tag.label
+    label: tag.label,
+    isPrediction: tag.isPrediction || false,
+    confidence: tag.confidence || null
   })
   saveTags()
-  selectedRange.value = null
+  if (!tag.isPrediction) {
+    selectedRange.value = null
+  }
 }
 
 const deleteTag = (tagId) => {
