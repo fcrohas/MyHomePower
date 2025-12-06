@@ -122,10 +122,10 @@
           </div>
           <button 
             @click="deleteTagHandler(tag.id)" 
-            :class="['btn-delete', { 'confirm-delete': tagToDelete === tag.id }]"
-            :title="tagToDelete === tag.id ? 'Click again to confirm' : 'Delete tag'"
+            class="btn-delete"
+            title="Delete tag"
           >
-            {{ tagToDelete === tag.id ? '⚠' : '✕' }}
+            ✕
           </button>
         </div>
       </div>
@@ -220,10 +220,6 @@ const props = defineProps({
   currentDate: {
     type: String,
     required: true
-  },
-  showToast: {
-    type: Function,
-    default: null
   }
 })
 
@@ -241,9 +237,6 @@ const selectedSensors = ref(new Set())
 const availableSensors = ref([])
 const subtractedSensors = ref([])
 const selectedSensorToAdd = ref('')
-
-// Delete confirmation
-const tagToDelete = ref(null)
 
 const toggleAccordion = () => {
   isExpanded.value = !isExpanded.value
@@ -328,25 +321,8 @@ const cancel = () => {
 
 // Delete tag
 const deleteTagHandler = (tagId) => {
-  if (tagToDelete.value === tagId) {
-    // Second click confirms deletion
+  if (confirm('Are you sure you want to delete this tag?')) {
     emit('delete-tag', tagId)
-    tagToDelete.value = null
-    if (props.showToast) {
-      props.showToast('Tag deleted successfully', 'success')
-    }
-  } else {
-    // First click - mark for deletion
-    tagToDelete.value = tagId
-    if (props.showToast) {
-      props.showToast('Click again to confirm deletion', 'info')
-    }
-    // Reset after 3 seconds
-    setTimeout(() => {
-      if (tagToDelete.value === tagId) {
-        tagToDelete.value = null
-      }
-    }, 3000)
   }
 }
 
@@ -491,9 +467,7 @@ const fetchAndSubtractSensorData = async (entityId) => {
     
   } catch (error) {
     console.error('Failed to fetch sensor history:', error)
-    if (props.showToast) {
-      props.showToast('Failed to fetch sensor history: ' + error.message, 'error')
-    }
+    alert('Failed to fetch sensor history: ' + error.message)
   }
 }
 
@@ -752,29 +726,11 @@ watch(() => props.currentDate, () => {
   cursor: pointer;
   font-size: 1.2rem;
   line-height: 1;
-  transition: all 0.3s;
+  transition: background 0.3s;
 }
 
 .btn-delete:hover {
   background: #c82333;
-}
-
-.btn-delete.confirm-delete {
-  background: #ff9800;
-  animation: pulse 0.5s ease-in-out infinite alternate;
-}
-
-.btn-delete.confirm-delete:hover {
-  background: #f57c00;
-}
-
-@keyframes pulse {
-  from {
-    transform: scale(1);
-  }
-  to {
-    transform: scale(1.1);
-  }
 }
 
 .statistics {

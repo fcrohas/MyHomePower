@@ -101,7 +101,6 @@
             :tags="tags"
             :selectedRange="selectedRange"
             :currentDate="selectedDate"
-            :showToast="showToast"
             @add-tag="addTag"
             @delete-tag="deleteTag"
             @clear-selection="clearSelection"
@@ -154,20 +153,6 @@
       <!-- Loading/Status -->
       <div v-if="loading" class="loading">Loading data...</div>
     </div>
-    
-    <!-- Toast Notifications -->
-    <div class="toast-container">
-      <transition-group name="toast">
-        <div 
-          v-for="toast in toasts" 
-          :key="toast.id" 
-          :class="['toast', `toast-${toast.type}`]"
-        >
-          <span class="toast-icon">{{ toast.icon }}</span>
-          <span class="toast-message">{{ toast.message }}</span>
-        </div>
-      </transition-group>
-    </div>
   </div>
 </template>
 
@@ -192,34 +177,6 @@ const loading = ref(false)
 
 // Tab management
 const activeTab = ref('tagging')
-
-// Toast notifications
-const toasts = ref([])
-let toastId = 0
-
-const showToast = (message, type = 'success') => {
-  const icons = {
-    success: '✓',
-    error: '✕',
-    info: 'ℹ'
-  }
-  
-  const id = toastId++
-  toasts.value.push({
-    id,
-    message,
-    type,
-    icon: icons[type] || icons.info
-  })
-  
-  // Auto-remove after 4 seconds
-  setTimeout(() => {
-    const index = toasts.value.findIndex(t => t.id === id)
-    if (index > -1) {
-      toasts.value.splice(index, 1)
-    }
-  }, 4000)
-}
 
 // Date management
 const selectedDate = ref(format(new Date(), 'yyyy-MM-dd'))
@@ -513,11 +470,11 @@ const exportCurrentDay = async () => {
   try {
     const result = await exportDay(selectedDate.value, tags.value)
     console.log(`✅ Saved ${result.entries} entries to ${result.filename}`)
-    showToast(`Saved ${result.entries} entries to ${result.filename}`, 'success')
+    alert(`Success! Saved ${result.entries} entries to ${result.filename}`)
   } catch (err) {
     error.value = 'Failed to export: ' + err.message
     console.error('Export error:', err)
-    showToast('Failed to export: ' + err.message, 'error')
+    alert('Failed to export: ' + err.message)
   } finally {
     loading.value = false
   }
@@ -815,90 +772,6 @@ button:disabled {
   padding: 2rem;
   color: #666;
   font-style: italic;
-}
-
-/* Toast Notifications */
-.toast-container {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  z-index: 9999;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  pointer-events: none;
-}
-
-.toast {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 20px;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  min-width: 250px;
-  max-width: 400px;
-  pointer-events: auto;
-  font-size: 14px;
-  font-weight: 500;
-  animation: slideIn 0.3s ease-out;
-}
-
-.toast-success {
-  background: #42b983;
-  color: white;
-}
-
-.toast-error {
-  background: #f56565;
-  color: white;
-}
-
-.toast-info {
-  background: #4299e1;
-  color: white;
-}
-
-.toast-icon {
-  font-size: 18px;
-  font-weight: bold;
-  flex-shrink: 0;
-}
-
-.toast-message {
-  flex: 1;
-  word-break: break-word;
-}
-
-/* Toast Animations */
-.toast-enter-active {
-  animation: slideIn 0.3s ease-out;
-}
-
-.toast-leave-active {
-  animation: slideOut 0.3s ease-in;
-}
-
-@keyframes slideIn {
-  from {
-    transform: translateX(400px);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
-
-@keyframes slideOut {
-  from {
-    transform: translateX(0);
-    opacity: 1;
-  }
-  to {
-    transform: translateX(400px);
-    opacity: 0;
-  }
 }
 
 @media (max-width: 1200px) {
