@@ -125,14 +125,6 @@ class SlidingWindowPredictor {
           
           predictionCount++
           
-          // Log first few predictions for debugging
-          if (predictionCount <= 3) {
-            console.log(`Prediction ${predictionCount}:`)
-            console.log(`  Lookback: ${new Date(lookbackStart).toISOString()} to ${new Date(lookbackEnd).toISOString()}`)
-            console.log(`  Predicting: ${startTimeStr}-${endTimeStr}`)
-            console.log(`  Tags: ${predictedTags.map(t => t.tag).join(', ')}`)
-          }
-          
           // Cleanup
           inputTensor.dispose()
           predictionTensor.dispose()

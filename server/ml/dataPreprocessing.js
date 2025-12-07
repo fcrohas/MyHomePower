@@ -233,22 +233,15 @@ export function prepareTrainingData(
       // If selectedTags filter is provided, include samples with selected tags OR standby
       if (selectedTags && selectedTags.length > 0) {
         const hasSelectedTag = tags.some(tag => selectedTags.includes(tag))
-        const isStandby = tags.length === 1 && tags[0] === 'standby'
         
-        // Include if has selected tag OR is standby (to provide negative examples)
-        if (!hasSelectedTag && !isStandby) {
-          continue // Skip samples with other appliances
-        }
-        
-        // For standby, keep it as is; for others, filter to selected tags only
         let finalTags
-        if (isStandby) {
+        if (!hasSelectedTag) {
           finalTags = ['standby']
           allTags.add('standby')
         } else {
           finalTags = tags.filter(tag => selectedTags.includes(tag))
           if (finalTags.length === 0) {
-            continue // Skip if no selected tags remain after filtering
+            finalTags = ['standby']
           }
           finalTags.forEach(tag => allTags.add(tag))
         }
