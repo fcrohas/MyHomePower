@@ -576,10 +576,42 @@ const loadAndPredict = async () => {
       // Legacy format with 10-minute windows
       predictions.value = result.predictions.map((p) => {
         console.log('Processing prediction:', p)
+        
+        // If there are multiple tags, find the highest confidence tag that is NOT "other" or "standby"
+        let displayTag = p.tag
+        let displayColor = getTagColor(p.tag)
+        
+        if (p.tags && Array.isArray(p.tags) && p.tags.length > 0) {
+          // Filter out "other" and "standby" tags
+          const nonOtherTags = p.tags.filter(t => 
+            t.tag !== 'standby' && t.tag !== 'other'
+          )
+          
+          // If we have non-other tags, use the one with highest confidence
+          if (nonOtherTags.length > 0) {
+            // Sort by probability/confidence descending
+            const sortedTags = nonOtherTags.sort((a, b) => {
+              const probA = a.probability || a.prob || 0
+              const probB = b.probability || b.prob || 0
+              return probB - probA
+            })
+            displayTag = sortedTags[0].tag
+            displayColor = getTagColor(displayTag)
+          } else {
+            // Only "other"/"standby" tags present
+            displayTag = 'other'
+            displayColor = getTagColor('other')
+          }
+        } else {
+          // Single tag case
+          displayTag = p.tag === 'standby' ? 'other' : p.tag
+          displayColor = getTagColor(displayTag)
+        }
+        
         return {
           ...p,
-          displayTag: p.tag === 'standby' ? 'other' : p.tag,
-          color: getTagColor(p.tag)
+          displayTag: displayTag,
+          color: displayColor
         }
       })
       console.log('Processed predictions sample:', predictions.value[0])
