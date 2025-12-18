@@ -296,13 +296,72 @@ const totalStandbyEnergy = computed(() => {
 })
 
 const otherEnergy = computed(() => {
-  // Other energy = tagged power - standby
-  return energyByTag.value['other'] || 0
+  // Other energy = actual total - standby - appliances
+  // This ensures the sum equals actual total energy
+  const other = actualTotalEnergy.value - totalStandbyEnergy.value - totalEnergy.value
+  return Math.max(0, other) // Ensure non-negative
 })
 
 const totalCombinedEnergy = computed(() => {
   // Total energy: appliance + standby + other
   return totalEnergy.value + totalStandbyEnergy.value + otherEnergy.value
+})
+
+const actualTotalEnergy = computed(() => {
+  // Calculate actual total energy from power curve using trapezoidal integration
+  // Include full intervals if any part overlaps with the selected day
+  if (powerData.value.length < 2) return 0
+  
+  const dayStartTime = new Date(`${selectedDate.value}T00:00:00`).getTime()
+  const dayEndTime = new Date(`${selectedDate.value}T23:59:59`).getTime()
+  
+  let totalEnergy = 0
+  
+  for (let i = 0; i < powerData.value.length - 1; i++) {
+    const current = powerData.value[i]
+    const next = powerData.value[i + 1]
+    
+    const currentTime = new Date(current.timestamp || current.last_changed || current.last_updated).getTime()
+    const nextTime = new Date(next.timestamp || next.last_changed || next.last_updated).getTime()
+    
+    // Validate timestamps
+    if (isNaN(currentTime) || isNaN(nextTime)) continue
+    
+    // Skip if interval is completely outside the day range
+    if (nextTime <= dayStartTime || currentTime >= dayEndTime) continue
+    
+    // Get power values
+    const currentPower = parseFloat(current.value || current.state || 0)
+    const nextPower = parseFloat(next.value || next.state || 0)
+    
+    // Validate power values
+    if (isNaN(currentPower) || isNaN(nextPower)) continue
+    
+    const duration = (nextTime - currentTime) / (1000 * 60 * 60) // hours
+    
+    // Validate duration
+    if (isNaN(duration) || duration <= 0 || duration > 24) continue
+    
+    // Trapezoidal rule: average of start and end power × full duration
+    // Use full interval duration to capture all energy
+    const avgPower = (currentPower + nextPower) / 2
+    const energy = avgPower * duration
+    
+    // Validate energy before adding
+    if (!isNaN(energy) && isFinite(energy)) {
+      totalEnergy += energy
+    }
+  }
+  
+  // Return 0 if result is invalid
+  return isNaN(totalEnergy) || !isFinite(totalEnergy) ? 0 : totalEnergy
+})
+
+const energyErrorRate = computed(() => {
+  // Calculate error rate: (predicted - actual) / actual * 100
+  if (actualTotalEnergy.value === 0) return 0
+  const error = ((totalCombinedEnergy.value - actualTotalEnergy.value) / actualTotalEnergy.value) * 100
+  return error
 })
 
 const avgPower = computed(() => {
@@ -514,7 +573,9 @@ const loadAndPredict = async () => {
     // lookback data for predicting from 00:00 (5 windows x 10 minutes = 50 minutes)
     const startDate = new Date(`${selectedDate.value}T00:00:00`)
     startDate.setMinutes(startDate.getMinutes() - 50) // Go back 50 minutes
+    // Fetch through the beginning of the next day to capture the last interval properly
     const endDate = new Date(`${selectedDate.value}T23:59:59`)
+    endDate.setHours(endDate.getHours() + 1) // Add 1 hour to get into next day
 
     const historyResponse = await fetch('http://localhost:3001/api/ha/history', {
       method: 'POST',
@@ -653,9 +714,25 @@ const loadAndPredict = async () => {
             const activePredictions = windowPredictions.filter(p => p.thresholdPassed)
             
             if (activePredictions.length > 0) {
+              // Use trapezoidal integration for energy calculation (same as actual total)
+              let windowEnergy = 0
+              for (let i = 0; i < activePredictions.length - 1; i++) {
+                const current = activePredictions[i]
+                const next = activePredictions[i + 1]
+                const currentTime = new Date(current.timestamp).getTime()
+                const nextTime = new Date(next.timestamp).getTime()
+                const duration = (nextTime - currentTime) / (1000 * 60 * 60) // hours
+                
+                if (duration > 0 && duration < 1) { // Sanity check
+                  // Trapezoidal rule: average of start and end power × duration
+                  const avgPower = (current.predictedPower + next.predictedPower) / 2
+                  windowEnergy += avgPower * duration
+                }
+              }
+              
+              // Calculate average power and probability for display
               const avgPower = activePredictions.reduce((sum, p) => sum + p.predictedPower, 0) / activePredictions.length
               const avgOnOffProb = activePredictions.reduce((sum, p) => sum + p.onoffProbability, 0) / activePredictions.length
-              const energy = avgPower * 10 / 60 // Convert to Wh for 10-minute window
               
               allWindows.push({
                 startTime: format(new Date(time), 'HH:mm'),
@@ -664,7 +741,7 @@ const loadAndPredict = async () => {
                 displayTag: appliance,
                 confidence: avgOnOffProb,
                 avgPower: avgPower,
-                energy: energy,
+                energy: windowEnergy, // Use trapezoidal integration result
                 standbyEnergy: 0,
                 color: getTagColor(appliance),
                 tags: [{ tag: appliance, probability: avgOnOffProb }],
@@ -1719,6 +1796,24 @@ onUnmounted(() => {
 .stat-item.total .value {
   font-size: 1.2rem;
   color: #1976d2;
+}
+
+.stat-item.error-low {
+  background: #e8f5e9;
+  border-left: 4px solid #4caf50;
+}
+
+.stat-item.error-high {
+  background: #ffebee;
+  border-left: 4px solid #f44336;
+}
+
+.stat-item.error-low .value {
+  color: #2e7d32;
+}
+
+.stat-item.error-high .value {
+  color: #c62828;
 }
 
 .predictions-table {
