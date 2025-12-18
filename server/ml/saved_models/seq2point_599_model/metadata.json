@@ -1,0 +1,146 @@
+{
+  "appliance": "599",
+  "windowLength": 30,
+  "epochs": 128,
+  "batchSize": 128,
+  "trainSamples": 295167,
+  "valSamples": 15536,
+  "mainsStats": {
+    "mean": 872.2636114186685,
+    "std": 921.9043652581381
+  },
+  "applianceStats": {
+    "mean": 0,
+    "std": 1,
+    "onPowerThreshold": 0,
+    "maxOnPower": 0
+  },
+  "trainTime": 1281.215,
+  "samplesPerDay": [
+    {
+      "date": "2025-11-08",
+      "samples": 9461
+    },
+    {
+      "date": "2025-11-09",
+      "samples": 9468
+    },
+    {
+      "date": "2025-11-10",
+      "samples": 9886
+    },
+    {
+      "date": "2025-11-11",
+      "samples": 11280
+    },
+    {
+      "date": "2025-11-12",
+      "samples": 9164
+    },
+    {
+      "date": "2025-11-13",
+      "samples": 9433
+    },
+    {
+      "date": "2025-11-14",
+      "samples": 7744
+    },
+    {
+      "date": "2025-11-15",
+      "samples": 8810
+    },
+    {
+      "date": "2025-11-16",
+      "samples": 9511
+    },
+    {
+      "date": "2025-11-17",
+      "samples": 8947
+    },
+    {
+      "date": "2025-11-18",
+      "samples": 10442
+    },
+    {
+      "date": "2025-11-19",
+      "samples": 9151
+    },
+    {
+      "date": "2025-11-20",
+      "samples": 9893
+    },
+    {
+      "date": "2025-11-21",
+      "samples": 9783
+    },
+    {
+      "date": "2025-11-22",
+      "samples": 9472
+    },
+    {
+      "date": "2025-11-23",
+      "samples": 9400
+    },
+    {
+      "date": "2025-11-24",
+      "samples": 9375
+    },
+    {
+      "date": "2025-11-25",
+      "samples": 11595
+    },
+    {
+      "date": "2025-11-26",
+      "samples": 10825
+    },
+    {
+      "date": "2025-11-27",
+      "samples": 10976
+    },
+    {
+      "date": "2025-11-28",
+      "samples": 9637
+    },
+    {
+      "date": "2025-11-29",
+      "samples": 11074
+    },
+    {
+      "date": "2025-11-30",
+      "samples": 11313
+    },
+    {
+      "date": "2025-12-01",
+      "samples": 9986
+    },
+    {
+      "date": "2025-12-02",
+      "samples": 11262
+    },
+    {
+      "date": "2025-12-03",
+      "samples": 10206
+    },
+    {
+      "date": "2025-12-04",
+      "samples": 11110
+    },
+    {
+      "date": "2025-12-05",
+      "samples": 10889
+    },
+    {
+      "date": "2025-12-06",
+      "samples": 10752
+    },
+    {
+      "date": "2025-12-07",
+      "samples": 10562
+    },
+    {
+      "date": "2025-12-16",
+      "samples": 9296
+    }
+  ],
+  "createdAt": "2025-12-17T22:21:43.692Z"
+}

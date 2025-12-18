@@ -1,0 +1,102 @@
+{
+  "id": "1765740130867",
+  "name": "fridge Model",
+  "uniqueTags": [
+    "fridge",
+    "standby"
+  ],
+  "stats": {
+    "minPower": 150,
+    "maxPower": 5730
+  },
+  "trainedAt": "2025-12-14T19:22:10.884Z",
+  "trainingHistory": [
+    {
+      "epoch": 1,
+      "loss": 0.6259201169013977,
+      "accuracy": 0.6461988091468811,
+      "valLoss": 0.5475504398345947,
+      "valAccuracy": 0.765497088432312,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 2,
+      "loss": 0.5041847229003906,
+      "accuracy": 0.7605262994766235,
+      "valLoss": 0.5218221545219421,
+      "valAccuracy": 0.7327485084533691,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 3,
+      "loss": 0.47162139415740967,
+      "accuracy": 0.7739766240119934,
+      "valLoss": 0.49381616711616516,
+      "valAccuracy": 0.761403501033783,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 4,
+      "loss": 0.45100945234298706,
+      "accuracy": 0.7771929502487183,
+      "valLoss": 0.4495791494846344,
+      "valAccuracy": 0.7900584936141968,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 5,
+      "loss": 0.4450244903564453,
+      "accuracy": 0.769298255443573,
+      "valLoss": 0.4515777826309204,
+      "valAccuracy": 0.7883040904998779,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 6,
+      "loss": 0.42535436153411865,
+      "accuracy": 0.7752923965454102,
+      "valLoss": 0.46122825145721436,
+      "valAccuracy": 0.75789475440979,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 7,
+      "loss": 0.4402076005935669,
+      "accuracy": 0.7643274664878845,
+      "valLoss": 0.5335399508476257,
+      "valAccuracy": 0.6888889074325562,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 8,
+      "loss": 0.44096171855926514,
+      "accuracy": 0.7783625721931458,
+      "valLoss": 0.48018181324005127,
+      "valAccuracy": 0.7795321345329285,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 9,
+      "loss": 0.40957945585250854,
+      "accuracy": 0.7845029234886169,
+      "valLoss": 0.449841171503067,
+      "valAccuracy": 0.7456140518188477,
+      "stoppedEarly": true
+    }
+  ],
+  "datasetInfo": {
+    "numberOfDays": 3,
+    "dates": [
+      "2025-11-10",
+      "2025-11-11",
+      "2025-11-12"
+    ],
+    "totalSamples": 4275
+  },
+  "finalMetrics": {
+    "loss": 0.40957945585250854,
+    "accuracy": 0.7845029234886169,
+    "valLoss": 0.449841171503067,
+    "valAccuracy": 0.7456140518188477
+  }
+}

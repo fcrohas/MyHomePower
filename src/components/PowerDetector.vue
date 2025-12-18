@@ -72,6 +72,24 @@
               Use new sliding window predictor (multi-label detection)
             </label>
           </div>
+          <div class="config-item checkbox">
+            <label>
+              <input type="checkbox" v-model="useSeq2Point" @change="onSeq2PointToggle" />
+              Use Seq2Point energy disaggregation model
+            </label>
+          </div>
+          <div v-if="useSeq2Point" class="config-item">
+            <label for="seq2pointModel">Seq2Point Model:</label>
+            <select id="seq2pointModel" v-model="selectedSeq2PointModel" :disabled="loadingModels || seq2pointModels.length === 0">
+              <option value="" disabled>{{ loadingModels ? 'Loading models...' : (seq2pointModels.length === 0 ? 'No models available' : 'Select a model') }}</option>
+              <option v-for="model in seq2pointModels" :key="model" :value="model">
+                {{ model }}
+              </option>
+            </select>
+            <span class="config-hint" v-if="seq2pointModels.length === 0 && !loadingModels">
+              Train a seq2point model first using: node server/ml/seq2point-train.js "appliance_name"
+            </span>
+          </div>
         </div>
         <div class="dialog-footer">
           <button @click="showSettingsDialog = false" class="btn-close">Close</button>
@@ -101,7 +119,16 @@
     <div v-if="predictions.length > 0 && !loading" class="charts-container">
       <!-- Power Chart with Predicted Tags -->
       <div class="chart-section full-width">
-        <h3>📊 Power Consumption with Predicted Tags</h3>
+        <div class="chart-header">
+          <h3>📊 Power Consumption with Predicted Tags</h3>
+          <div v-if="selectedAppliance" class="filter-badge">
+            <span class="filter-label">Filtered by:</span>
+            <span class="filter-appliance" :style="{ backgroundColor: getTagColor(selectedAppliance) }">
+              {{ selectedAppliance }}
+            </span>
+            <button @click="clearApplianceFilter" class="clear-filter-btn" title="Show all appliances">✕</button>
+          </div>
+        </div>
         <div class="chart-wrapper power-chart-wrapper">
           <canvas ref="powerChartCanvas"></canvas>
         </div>
@@ -115,6 +142,9 @@
         <h3>📈 Energy Consumption by Activity</h3>
         <div class="chart-wrapper pie-wrapper">
           <canvas ref="pieChartCanvas"></canvas>
+        </div>
+        <div class="legend-info">
+          💡 Click on a slice to filter the power chart by appliance
         </div>
       </div>
 
@@ -244,6 +274,15 @@ const stepSize = ref(5) // Default 5 minutes
 const threshold = ref(0.25) // Default 25% threshold for multi-label
 const useNewPredictor = ref(false) // Use old predictor by default until tested
 
+// Seq2point configuration
+const useSeq2Point = ref(false)
+const seq2pointModels = ref([])
+const selectedSeq2PointModel = ref('')
+const loadingModels = ref(false)
+
+// Appliance filter for power chart
+const selectedAppliance = ref(null)
+
 // Color palette for tags
 const tagColors = [
   '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF',
@@ -282,6 +321,43 @@ const avgPower = computed(() => {
 
 const energyByTag = computed(() => {
   const byTag = {}
+  
+  // Special handling for seq2point: show appliance vs. baseline
+  if (useSeq2Point.value && selectedSeq2PointModel.value && powerData.value.length > 0) {
+    // Calculate total appliance energy from predictions
+    const applianceEnergy = predictions.value.reduce((sum, p) => sum + (p.energy || 0), 0)
+    
+    // Calculate total aggregate energy from raw power data for the day
+    const dayStartTime = new Date(`${selectedDate.value}T00:00:00`).getTime()
+    const dayEndTime = new Date(`${selectedDate.value}T23:59:59`).getTime()
+    
+    let totalAggregateEnergy = 0
+    for (let i = 0; i < powerData.value.length - 1; i++) {
+      const current = powerData.value[i]
+      const next = powerData.value[i + 1]
+      
+      const currentTime = new Date(current.timestamp || current.last_changed || current.last_updated).getTime()
+      const nextTime = new Date(next.timestamp || next.last_changed || next.last_updated).getTime()
+      
+      // Only count energy within the selected day
+      if (currentTime >= dayStartTime && currentTime <= dayEndTime) {
+        const power = parseFloat(current.value || current.state || 0)
+        const duration = (nextTime - currentTime) / (1000 * 60 * 60) // hours
+        totalAggregateEnergy += power * duration
+      }
+    }
+    
+    // Show appliance energy and baseline (everything else)
+    byTag[selectedSeq2PointModel.value] = applianceEnergy
+    const baselineEnergy = Math.max(0, totalAggregateEnergy - applianceEnergy)
+    if (baselineEnergy > 0) {
+      byTag['baseline'] = baselineEnergy
+    }
+    
+    return byTag
+  }
+  
+  // Regular handling for multi-label or legacy predictions
   predictions.value.forEach(p => {
     // Handle multi-label: distribute energy among all detected tags
     if (useNewPredictor.value && p.tags && p.tags.length > 0) {
@@ -319,6 +395,11 @@ const formatDate = (dateStr) => {
   return format(parseISO(dateStr), 'EEEE, MMMM d, yyyy')
 }
 
+const clearApplianceFilter = () => {
+  selectedAppliance.value = null
+  renderPowerChart()
+}
+
 const previousDay = () => {
   const date = parseISO(selectedDate.value)
   selectedDate.value = format(subDays(date, 1), 'yyyy-MM-dd')
@@ -352,6 +433,35 @@ const getTagColor = (tag) => {
     colorMap.value[tag] = tagColors[regularTagCount % tagColors.length]
   }
   return colorMap.value[tag]
+}
+
+const loadSeq2PointModels = async () => {
+  loadingModels.value = true
+  try {
+    const response = await fetch('http://localhost:3001/api/seq2point/models')
+    if (response.ok) {
+      const data = await response.json()
+      // Extract just the appliance names from the model objects
+      seq2pointModels.value = (data.models || []).map(m => m.appliance)
+      if (seq2pointModels.value.length > 0 && !selectedSeq2PointModel.value) {
+        selectedSeq2PointModel.value = seq2pointModels.value[0]
+      }
+    } else {
+      console.error('Failed to load seq2point models')
+      seq2pointModels.value = []
+    }
+  } catch (err) {
+    console.error('Error loading seq2point models:', err)
+    seq2pointModels.value = []
+  } finally {
+    loadingModels.value = false
+  }
+}
+
+const onSeq2PointToggle = () => {
+  if (useSeq2Point.value && seq2pointModels.value.length === 0) {
+    loadSeq2PointModels()
+  }
 }
 
 const loadAndPredict = async () => {
@@ -416,6 +526,159 @@ const loadAndPredict = async () => {
     }
 
     loadingProgress.value = `Processing ${powerData.value.length} power readings...`
+
+    // Use seq2point API if enabled
+    if (useSeq2Point.value) {
+      if (!selectedSeq2PointModel.value) {
+        throw new Error('Please select a seq2point model first')
+      }
+      
+      loadingProgress.value = `Running Seq2Point predictions with ${selectedSeq2PointModel.value}...`
+      
+      // Transform powerData to ensure it has the right format (power/value field)
+      const formattedPowerData = powerData.value.map(dp => ({
+        timestamp: dp.timestamp || dp.last_changed || dp.last_updated,
+        power: parseFloat(dp.power || dp.value || dp.state || 0)
+      }))
+      
+      const seq2pointResponse = await fetch('http://localhost:3001/api/seq2point/predict-day', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appliance: selectedSeq2PointModel.value,
+          date: selectedDate.value,
+          powerData: formattedPowerData
+        })
+      })
+      
+      if (!seq2pointResponse.ok) {
+        const errorText = await seq2pointResponse.text()
+        let errorData
+        try {
+          errorData = JSON.parse(errorText)
+          throw new Error(errorData.error || errorData.message || 'Seq2Point prediction failed')
+        } catch (e) {
+          throw new Error(`Seq2Point prediction failed: ${seq2pointResponse.status}`)
+        }
+      }
+      
+      const seq2pointResult = await seq2pointResponse.json()
+      
+      // Debug: Check the predictions
+      console.log('=== SEQ2POINT PREDICTIONS DEBUG ===')
+      console.log('Total predictions:', seq2pointResult.predictions?.length)
+      console.log('Sample predictions (first 10):')
+      seq2pointResult.predictions?.slice(0, 10).forEach((p, i) => {
+        console.log(`  ${i}: ${new Date(p.timestamp).toLocaleTimeString()} - ${(p.predictedPower || p.power || 0).toFixed(2)}W`)
+      })
+      console.log('Power distribution:')
+      const powers = seq2pointResult.predictions?.map(p => p.predictedPower || p.power || 0) || []
+      const minPower = Math.min(...powers)
+      const maxPower = Math.max(...powers)
+      const avgPowerAll = powers.reduce((sum, p) => sum + p, 0) / powers.length
+      console.log(`  Min: ${minPower.toFixed(2)}W, Max: ${maxPower.toFixed(2)}W, Avg: ${avgPowerAll.toFixed(2)}W`)
+      console.log('=== END DEBUG ===')
+      
+      // Transform seq2point predictions to match the expected format
+      // seq2point returns: { predictions: [{timestamp, power}], totalEnergy, avgPower }
+      // We need to convert to windowed predictions for display
+      modelLoaded.value = true
+      loadingProgress.value = 'Processing seq2point predictions...'
+      
+      // Group predictions into 10-minute windows
+      const windowSize = 10 * 60 * 1000 // 10 minutes in ms
+      const dayStart = new Date(`${selectedDate.value}T00:00:00`).getTime()
+      const dayEnd = new Date(`${selectedDate.value}T23:59:59`).getTime()
+      
+      const windows = []
+      // Use on/off classification from model if available, otherwise fall back to power threshold
+      const hasOnOffClassification = seq2pointResult.predictions.length > 0 && 
+                                      seq2pointResult.predictions[0].onoffProbability !== null &&
+                                      seq2pointResult.predictions[0].onoffProbability !== undefined
+      
+      for (let time = dayStart; time < dayEnd; time += windowSize) {
+        const windowEnd = Math.min(time + windowSize, dayEnd)
+        const windowPredictions = seq2pointResult.predictions.filter(p => {
+          const predTime = new Date(p.timestamp).getTime()
+          return predTime >= time && predTime < windowEnd
+        })
+        
+        if (windowPredictions.length > 0) {
+          const avgPower = windowPredictions.reduce((sum, p) => sum + (p.predictedPower || p.power || 0), 0) / windowPredictions.length
+          
+          // Use on/off classification if available, otherwise use power threshold
+          let isActive = false
+          let avgOnOffProb = 0
+          
+          if (hasOnOffClassification) {
+            // Count how many predictions in this window are classified as ON
+            const onCount = windowPredictions.filter(p => p.isOn).length
+            avgOnOffProb = windowPredictions.reduce((sum, p) => sum + (p.onoffProbability || 0), 0) / windowPredictions.length
+            // Window is active if >50% of predictions are ON
+            isActive = onCount > windowPredictions.length / 2
+          } else {
+            // Fallback to power threshold
+            isActive = avgPower > 200
+            avgOnOffProb = avgPower > 200 ? 1.0 : 0.0
+          }
+          
+          // Only create a window if the appliance is active AND confidence meets threshold
+          if (isActive && avgOnOffProb >= threshold.value) {
+            const energy = avgPower * 10 / 60 // Convert to Wh for 10-minute window
+            
+            windows.push({
+              startTime: format(new Date(time), 'HH:mm'),
+              endTime: format(new Date(windowEnd), 'HH:mm'),
+              tag: selectedSeq2PointModel.value,
+              displayTag: selectedSeq2PointModel.value,
+              confidence: avgOnOffProb,
+              avgPower: avgPower,
+              energy: energy,
+              standbyEnergy: 0,
+              color: getTagColor(selectedSeq2PointModel.value),
+              tags: [{ tag: selectedSeq2PointModel.value, probability: avgOnOffProb }]
+            })
+          }
+        }
+      }
+      
+      predictions.value = windows
+      
+      // Store the full predicted power timeline for chart overlay
+      // Map predictions to timeline for drawing the predicted power curve
+      const predictedPowerTimeline = seq2pointResult.predictions.map(p => ({
+        x: new Date(p.timestamp),
+        y: p.predictedPower || p.power || 0
+      }))
+      
+      // Store on/off probability timeline for visualization
+      const onoffProbabilityTimeline = seq2pointResult.predictions.map(p => ({
+        x: new Date(p.timestamp),
+        y: (p.onoffProbability !== null && p.onoffProbability !== undefined) ? p.onoffProbability : null
+      })).filter(p => p.y !== null)
+      
+      // Store in a way that renderPowerChart can access
+      powerData.value.predictedPowerData = predictedPowerTimeline
+      powerData.value.onoffProbabilityData = onoffProbabilityTimeline
+      
+      // Only render charts if we have predictions
+      if (predictions.value.length > 0) {
+        // Render charts
+        loadingProgress.value = 'Rendering visualizations...'
+        await nextTick()
+        setTimeout(() => {
+          renderPowerChart()
+          renderPieChart()
+        }, 100)
+      } else {
+        // No appliance activity detected
+        error.value = `No ${selectedSeq2PointModel.value} activity detected above 200W threshold on this day`
+      }
+      
+      loading.value = false
+      loadingProgress.value = ''
+      return
+    }
 
     // Call the prediction endpoint with sliding window
     const endpoint = useNewPredictor.value 
@@ -619,21 +882,25 @@ const loadAndPredict = async () => {
     console.log('===== END DEBUG =====')
     
 
-    // Render charts
-    loadingProgress.value = 'Rendering visualizations...'
-    await nextTick()
-    console.log('Rendering charts...')
-    console.log('powerChartCanvas:', powerChartCanvas.value)
-    console.log('pieChartCanvas:', pieChartCanvas.value)
-    console.log('predictions length:', predictions.value.length)
-    
-    // Wait a bit more for DOM to be ready
-    setTimeout(() => {
-      console.log('After timeout - powerChartCanvas:', powerChartCanvas.value)
-      console.log('After timeout - pieChartCanvas:', pieChartCanvas.value)
-      renderPowerChart()
-      renderPieChart()
-    }, 100)
+    // Render charts only if we have predictions
+    if (predictions.value.length > 0) {
+      loadingProgress.value = 'Rendering visualizations...'
+      await nextTick()
+      console.log('Rendering charts...')
+      console.log('powerChartCanvas:', powerChartCanvas.value)
+      console.log('pieChartCanvas:', pieChartCanvas.value)
+      console.log('predictions length:', predictions.value.length)
+      
+      // Wait a bit more for DOM to be ready
+      setTimeout(() => {
+        console.log('After timeout - powerChartCanvas:', powerChartCanvas.value)
+        console.log('After timeout - pieChartCanvas:', pieChartCanvas.value)
+        renderPowerChart()
+        renderPieChart()
+      }, 100)
+    } else {
+      error.value = 'No appliance activity detected for this day'
+    }
 
   } catch (err) {
     console.error('Prediction error:', err)
@@ -688,41 +955,116 @@ const renderPowerChart = () => {
   }
 
   // Create segment colors based on predictions
+  // Filter by selected appliance if one is selected
   const segments = []
   predictions.value.forEach(pred => {
-    segments.push({
-      start: new Date(`${selectedDate.value}T${pred.startTime}`),
-      end: new Date(`${selectedDate.value}T${pred.endTime}`),
-      color: pred.color,
-      tag: pred.displayTag || pred.tag // Use displayTag for showing "other"
-    })
+    // Check if this prediction matches the selected appliance
+    let matches = !selectedAppliance.value // If no filter, include all
+    
+    if (selectedAppliance.value) {
+      const applianceName = selectedAppliance.value
+      
+      // Check if this prediction contains the selected appliance
+      if (pred.tags && Array.isArray(pred.tags)) {
+        matches = pred.tags.some(t => {
+          const tagName = t.tag === 'standby' ? 'other' : t.tag
+          return tagName === applianceName || (applianceName === 'other' && t.tag === 'standby')
+        })
+      } else {
+        const predTag = pred.displayTag || pred.tag
+        matches = predTag === applianceName || (applianceName === 'other' && predTag === 'standby')
+      }
+    }
+    
+    if (matches) {
+      segments.push({
+        start: new Date(`${selectedDate.value}T${pred.startTime}`),
+        end: new Date(`${selectedDate.value}T${pred.endTime}`),
+        color: pred.color,
+        tag: pred.displayTag || pred.tag // Use displayTag for showing "other"
+      })
+    }
   })
 
-  powerChart.value = new Chart(ctx, {
-    type: 'line',
-    data: {
-      datasets: [{
-        label: 'Power (W)',
-        data: dataPoints,
-        borderColor: '#2c3e50',
-        backgroundColor: 'rgba(44, 62, 80, 0.1)',
+  // Filter data points to only show periods matching the selected appliance
+  let filteredDataPoints = dataPoints
+  if (selectedAppliance.value && segments.length > 0) {
+    filteredDataPoints = dataPoints.filter(point => {
+      const pointTime = point.x.getTime()
+      // Check if this point falls within any of the filtered segments
+      return segments.some(seg => pointTime >= seg.start.getTime() && pointTime <= seg.end.getTime())
+    })
+  }
+
+  // Build datasets array - start with aggregate power
+  const datasets = [{
+    label: selectedAppliance.value ? `Power (W) - ${selectedAppliance.value}` : 'Power (W)',
+    data: filteredDataPoints,
+    borderColor: selectedAppliance.value ? getTagColor(selectedAppliance.value) : '#2c3e50',
+    backgroundColor: selectedAppliance.value ? getTagColor(selectedAppliance.value) + '40' : 'rgba(44, 62, 80, 0.1)',
+    borderWidth: 2,
+    fill: true,
+    tension: 0.1,
+    pointRadius: 0,
+    pointHoverRadius: 4,
+    yAxisID: 'y',
+    segment: {
+      backgroundColor: (ctx) => {
+        const x = ctx.p1.parsed.x
+        for (const seg of segments) {
+          if (x >= seg.start.getTime() && x <= seg.end.getTime()) {
+            return seg.color + '40'
+          }
+        }
+        return 'rgba(44, 62, 80, 0.1)'
+      }
+    }
+  }]
+  
+  // If we have predicted power data from seq2point, add it as overlay
+  if (powerData.value.predictedPowerData && useSeq2Point.value) {
+    const applianceColor = selectedSeq2PointModel.value ? getTagColor(selectedSeq2PointModel.value) : '#FF6384'
+    datasets.push({
+      label: `${selectedSeq2PointModel.value || 'Appliance'} Predicted Power`,
+      data: powerData.value.predictedPowerData.filter(d => {
+        const time = d.x.getTime()
+        return time >= dayStartTime && time <= dayEndTime
+      }),
+      borderColor: applianceColor,
+      backgroundColor: 'transparent',
+      borderWidth: 3,
+      borderDash: [5, 5],
+      fill: false,
+      tension: 0.1,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      yAxisID: 'y'
+    })
+    
+    // Add on/off probability as secondary axis if available
+    if (powerData.value.onoffProbabilityData && powerData.value.onoffProbabilityData.length > 0) {
+      datasets.push({
+        label: 'ON/OFF Probability',
+        data: powerData.value.onoffProbabilityData.filter(d => {
+          const time = d.x.getTime()
+          return time >= dayStartTime && time <= dayEndTime
+        }),
+        borderColor: '#9B59B6',
+        backgroundColor: 'rgba(155, 89, 182, 0.1)',
         borderWidth: 2,
         fill: true,
         tension: 0.1,
         pointRadius: 0,
         pointHoverRadius: 4,
-        segment: {
-          backgroundColor: (ctx) => {
-            const x = ctx.p1.parsed.x
-            for (const seg of segments) {
-              if (x >= seg.start.getTime() && x <= seg.end.getTime()) {
-                return seg.color + '40'
-              }
-            }
-            return 'rgba(44, 62, 80, 0.1)'
-          }
-        }
-      }]
+        yAxisID: 'y2'
+      })
+    }
+  }
+
+  powerChart.value = new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: datasets
     },
     options: {
       responsive: true,
@@ -735,7 +1077,23 @@ const renderPowerChart = () => {
       plugins: {
         legend: {
           display: true,
-          position: 'top'
+          position: 'top',
+          onClick: (e, legendItem, legend) => {
+            const index = legendItem.datasetIndex
+            const chart = legend.chart
+            const meta = chart.getDatasetMeta(index)
+            
+            // Toggle visibility
+            meta.hidden = meta.hidden === null ? !chart.data.datasets[index].hidden : null
+            chart.update()
+          },
+          labels: {
+            usePointStyle: false,
+            padding: 15,
+            font: {
+              size: 12
+            }
+          }
         },
         tooltip: {
           callbacks: {
@@ -748,6 +1106,14 @@ const renderPowerChart = () => {
                   break
                 }
               }
+              
+              // Customize tooltip based on dataset
+              if (context.dataset.label.includes('Probability')) {
+                return `${context.dataset.label}: ${(context.parsed.y * 100).toFixed(1)}%`
+              } else if (context.dataset.label.includes('Predicted')) {
+                return `${context.dataset.label}: ${context.parsed.y.toFixed(0)} W`
+              }
+              
               return [
                 `Power: ${context.parsed.y.toFixed(0)} W`,
                 `Activity: ${tag}`
@@ -775,6 +1141,19 @@ const renderPowerChart = () => {
           title: {
             display: true,
             text: 'Power (W)'
+          },
+          position: 'left'
+        },
+        y2: {
+          beginAtZero: true,
+          max: 1,
+          title: {
+            display: true,
+            text: 'ON/OFF Probability'
+          },
+          position: 'right',
+          grid: {
+            drawOnChartArea: false
           }
         }
       }
@@ -813,6 +1192,14 @@ const renderPieChart = () => {
       responsive: true,
       maintainAspectRatio: true,
       aspectRatio: 1.5,
+      onClick: (event, elements) => {
+        if (elements.length > 0) {
+          const index = elements[0].index
+          const appliance = tags[index]
+          selectedAppliance.value = appliance
+          renderPowerChart()
+        }
+      },
       plugins: {
         legend: {
           position: 'right',
@@ -1168,10 +1555,62 @@ onUnmounted(() => {
   grid-column: 1 / -1;
 }
 
-.chart-section h3 {
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.chart-section h3 {
+  margin: 0;
   color: #2c3e50;
   font-size: 1.25rem;
+}
+
+.filter-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #f8f9fa;
+  border-radius: 20px;
+  font-size: 0.9rem;
+}
+
+.filter-label {
+  color: #666;
+  font-weight: 500;
+}
+
+.filter-appliance {
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.clear-filter-btn {
+  background: #e74c3c;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.clear-filter-btn:hover {
+  background: #c0392b;
+  transform: scale(1.1);
 }
 
 .chart-wrapper {

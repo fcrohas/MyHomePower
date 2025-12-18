@@ -10,6 +10,7 @@ import { PowerTagPredictor } from './ml/model.js'
 import { SlidingWindowPredictor } from './ml/slidingWindowPredictor.js'
 import { PowerAutoencoder } from './ml/autoencoder.js'
 import { loadAllData, prepareTrainingData, createTensors, preparePredictionInput } from './ml/dataPreprocessing.js'
+import { prepareSeq2PointInput, denormalizePower } from './ml/seq2pointPreprocessing.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -436,6 +437,21 @@ app.get('/api/ml/available-tags', async (req, res) => {
   }
 })
 
+// Stop ML model training
+app.post('/api/ml/stop', async (req, res) => {
+  if (!trainingInProgress) {
+    return res.status(400).json({ error: 'No training in progress' })
+  }
+
+  if (mlModel && mlModel.model) {
+    console.log('🛑 Stopping training...')
+    mlModel.model.stopTraining = true
+    res.json({ message: 'Training stop requested' })
+  } else {
+    res.status(400).json({ error: 'Model not available' })
+  }
+})
+
 // Train ML model
 app.post('/api/ml/train', async (req, res) => {
   if (trainingInProgress) {
@@ -523,7 +539,7 @@ app.post('/api/ml/train', async (req, res) => {
 
     // Train the model (more epochs for multi-label classification)
     const epochs = parseInt(maxEpochs) || 30
-    const batchSize = 32
+    const batchSize = 512 
     
     // Configure early stopping
     const earlyStoppingConfig = earlyStoppingEnabled ? {
@@ -531,9 +547,7 @@ app.post('/api/ml/train', async (req, res) => {
       minDelta: parseFloat(minDelta) || 0.0001
     } : null
 
-    await mlModel.train(xTrain, yTrain, xVal, yVal, epochs, batchSize, onEpochEnd, earlyStoppingConfig)
-
-    // Save the model with unique ID
+    // Prepare model directory for auto-save
     const modelId = Date.now().toString()
     const modelsBaseDir = path.join(__dirname, 'ml', 'models')
     const modelDir = path.join(modelsBaseDir, modelId)
@@ -541,8 +555,9 @@ app.post('/api/ml/train', async (req, res) => {
     if (!fs.existsSync(modelDir)) {
       fs.mkdirSync(modelDir, { recursive: true })
     }
-    
-    await mlModel.save(modelDir)
+
+    // Train with auto-save enabled
+    await mlModel.train(xTrain, yTrain, xVal, yVal, epochs, batchSize, onEpochEnd, earlyStoppingConfig, modelDir)
 
     // Calculate final metrics
     const finalMetrics = trainingHistory[trainingHistory.length - 1]
@@ -1988,6 +2003,335 @@ app.post('/api/anomaly/detect', async (req, res) => {
     console.error('Anomaly detection error:', error)
     res.status(500).json({
       error: 'Failed to detect anomalies',
+      message: error.message
+    })
+  }
+})
+
+// ============================================================
+// SEQ2POINT NILM ENDPOINTS
+// ============================================================
+
+// Store loaded seq2point models (appliance -> model instance)
+const seq2pointModels = new Map()
+const seq2pointMetadata = new Map()
+
+// List available seq2point models
+app.get('/api/seq2point/models', (req, res) => {
+  try {
+    const modelsDir = path.join(__dirname, 'ml', 'saved_models')
+    
+    if (!fs.existsSync(modelsDir)) {
+      return res.json({ models: [] })
+    }
+
+    const modelDirs = fs.readdirSync(modelsDir)
+      .filter(name => name.startsWith('seq2point_') && name.endsWith('_model'))
+      .filter(name => {
+        const modelPath = path.join(modelsDir, name)
+        return fs.statSync(modelPath).isDirectory()
+      })
+
+    const models = modelDirs.map(dirName => {
+      const modelPath = path.join(modelsDir, dirName)
+      const metadataPath = path.join(modelPath, 'metadata.json')
+      
+      // Extract appliance name from directory name
+      const appliance = dirName.replace('seq2point_', '').replace('_model', '')
+      
+      let metadata = null
+      if (fs.existsSync(metadataPath)) {
+        metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+      }
+
+      return {
+        appliance,
+        path: modelPath,
+        metadata,
+        loaded: seq2pointModels.has(appliance)
+      }
+    })
+
+    res.json({ models })
+  } catch (error) {
+    console.error('Error listing seq2point models:', error)
+    res.status(500).json({ error: 'Failed to list models', message: error.message })
+  }
+})
+
+// Load a specific seq2point model
+app.post('/api/seq2point/load', async (req, res) => {
+  try {
+    const { appliance } = req.body
+
+    if (!appliance) {
+      return res.status(400).json({ error: 'Missing appliance name' })
+    }
+
+    const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${appliance}_model`)
+    const metadataPath = path.join(modelDir, 'metadata.json')
+
+    if (!fs.existsSync(metadataPath)) {
+      return res.status(404).json({ error: `Model not found for appliance: ${appliance}` })
+    }
+
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+    
+    // Create and load model
+    const model = new PowerTagPredictor()
+    model.setNormalizationParams({
+      mainsMean: metadata.mainsStats.mean,
+      mainsStd: metadata.mainsStats.std,
+      applianceMean: metadata.applianceStats.mean,
+      applianceStd: metadata.applianceStats.std
+    })
+    
+    await model.load(modelDir)
+    
+    // Store in memory
+    seq2pointModels.set(appliance, model)
+    seq2pointMetadata.set(appliance, metadata)
+
+    console.log(`✅ Loaded seq2point model for: ${appliance}`)
+
+    res.json({
+      success: true,
+      appliance,
+      metadata
+    })
+  } catch (error) {
+    console.error('Error loading seq2point model:', error)
+    res.status(500).json({ error: 'Failed to load model', message: error.message })
+  }
+})
+
+// Predict appliance power consumption
+app.post('/api/seq2point/predict', async (req, res) => {
+  try {
+    const { appliance, powerData } = req.body
+
+    if (!appliance) {
+      return res.status(400).json({ error: 'Missing appliance name' })
+    }
+
+    if (!powerData || !Array.isArray(powerData)) {
+      return res.status(400).json({ error: 'Missing or invalid powerData array' })
+    }
+
+    // Load model if not in memory
+    if (!seq2pointModels.has(appliance)) {
+      const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${appliance}_model`)
+      const metadataPath = path.join(modelDir, 'metadata.json')
+
+      if (!fs.existsSync(metadataPath)) {
+        return res.status(404).json({ error: `Model not found for appliance: ${appliance}` })
+      }
+
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+      
+      const model = new PowerTagPredictor()
+      model.setNormalizationParams({
+        mainsMean: metadata.mainsStats.mean,
+        mainsStd: metadata.mainsStats.std,
+        applianceMean: metadata.applianceStats.mean,
+        applianceStd: metadata.applianceStats.std
+      })
+      
+      await model.load(modelDir)
+      
+      seq2pointModels.set(appliance, model)
+      seq2pointMetadata.set(appliance, metadata)
+
+      console.log(`✅ Loaded seq2point model for: ${appliance}`)
+    }
+
+    const model = seq2pointModels.get(appliance)
+    const metadata = seq2pointMetadata.get(appliance)
+    const windowLength = metadata.windowLength
+
+    // Need at least windowLength readings
+    if (powerData.length < windowLength) {
+      return res.status(400).json({ 
+        error: `Need at least ${windowLength} power readings. Got ${powerData.length}` 
+      })
+    }
+
+    // Extract power values
+    const aggregatePowers = powerData.map(dp => dp.power || dp.value || 0)
+
+    // Take last windowLength values and normalize
+    const window = aggregatePowers.slice(-windowLength)
+    const normalized = window.map(p => 
+      (p - metadata.mainsStats.mean) / metadata.mainsStats.std
+    )
+
+    // Create tensor [1, windowLength]
+    const inputTensor = tf.tensor2d([normalized])
+
+    // Predict
+    const predictionTensor = model.predict(inputTensor)
+    const normalizedPower = await predictionTensor.data()
+
+    // Denormalize to watts
+    const appliancePower = Math.max(0, 
+      (normalizedPower[0] * metadata.applianceStats.std) + metadata.applianceStats.mean
+    )
+
+    // Clean up
+    inputTensor.dispose()
+    predictionTensor.dispose()
+
+    res.json({
+      appliance,
+      predictedPower: Math.round(appliancePower * 100) / 100,
+      timestamp: powerData[powerData.length - 1].timestamp,
+      windowLength,
+      samplesUsed: window.length
+    })
+
+  } catch (error) {
+    console.error('Seq2point prediction error:', error)
+    res.status(500).json({
+      error: 'Failed to make prediction',
+      message: error.message
+    })
+  }
+})
+
+// Predict for entire day with sliding window
+app.post('/api/seq2point/predict-day', async (req, res) => {
+  try {
+    const { appliance, date, powerData } = req.body
+
+    if (!appliance) {
+      return res.status(400).json({ error: 'Missing appliance name' })
+    }
+
+    if (!date) {
+      return res.status(400).json({ error: 'Missing date' })
+    }
+
+    if (!powerData || !Array.isArray(powerData)) {
+      return res.status(400).json({ error: 'Missing or invalid powerData array' })
+    }
+
+    // Load model if needed
+    if (!seq2pointModels.has(appliance)) {
+      const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${appliance}_model`)
+      const metadataPath = path.join(modelDir, 'metadata.json')
+
+      if (!fs.existsSync(metadataPath)) {
+        return res.status(404).json({ error: `Model not found for appliance: ${appliance}` })
+      }
+
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+      
+      try {
+        const model = new PowerTagPredictor()
+        model.setNormalizationParams({
+          mainsMean: metadata.mainsStats.mean,
+          mainsStd: metadata.mainsStats.std,
+          applianceMean: metadata.applianceStats.mean,
+          applianceStd: metadata.applianceStats.std
+        })
+        
+        await model.load(modelDir)
+        
+        seq2pointModels.set(appliance, model)
+        seq2pointMetadata.set(appliance, metadata)
+      } catch (loadError) {
+        console.error(`Failed to load seq2point model for ${appliance}:`, loadError)
+        throw new Error(`Failed to load model: ${loadError.message}`)
+      }
+    }
+
+    const model = seq2pointModels.get(appliance)
+    const metadata = seq2pointMetadata.get(appliance)
+    const windowLength = metadata.windowLength
+    const offset = Math.floor(windowLength / 2)
+
+    // Extract and normalize aggregate powers
+    const aggregatePowers = powerData.map(dp => dp.power || dp.value || 0)
+    const timestamps = powerData.map(dp => dp.timestamp)
+    
+    const normalized = aggregatePowers.map(p => 
+      (p - metadata.mainsStats.mean) / metadata.mainsStats.std
+    )
+
+    // Generate predictions with sliding window
+    const predictions = []
+    const batchSize = 100 // Process in batches for efficiency
+
+    for (let i = 0; i <= normalized.length - windowLength; i += batchSize) {
+      const batchEnd = Math.min(i + batchSize, normalized.length - windowLength + 1)
+      const windows = []
+      
+      for (let j = i; j < batchEnd; j++) {
+        windows.push(normalized.slice(j, j + windowLength))
+      }
+
+      // Batch prediction
+      const inputTensor = tf.tensor2d(windows)
+      const predictionResult = model.predict(inputTensor)
+      
+      // Handle multi-task output (array) or single-task output (tensor)
+      let powerTensor, onoffTensor
+      if (Array.isArray(predictionResult)) {
+        // Multi-task: [powerPredictions, onoffPredictions]
+        powerTensor = predictionResult[0]
+        onoffTensor = predictionResult[1]
+      } else {
+        // Single-task: just power
+        powerTensor = predictionResult
+        onoffTensor = null
+      }
+      
+      const normalizedPreds = await powerTensor.data()
+      const onoffProbs = onoffTensor ? await onoffTensor.data() : null
+
+      // Denormalize and store both power and on/off
+      for (let k = 0; k < normalizedPreds.length; k++) {
+        const power = Math.max(0, 
+          (normalizedPreds[k] * metadata.applianceStats.std) + metadata.applianceStats.mean
+        )
+        predictions.push({
+          power: Math.round(power * 100) / 100,
+          onoffProb: onoffProbs ? onoffProbs[k] : null
+        })
+      }
+
+      inputTensor.dispose()
+      powerTensor.dispose()
+      if (onoffTensor) onoffTensor.dispose()
+    }
+
+    // Align predictions with timestamps (account for offset)
+    const results = []
+    for (let i = 0; i < predictions.length; i++) {
+      const midpointIndex = i + offset
+      if (midpointIndex < timestamps.length) {
+        results.push({
+          timestamp: timestamps[midpointIndex],
+          predictedPower: predictions[i].power,
+          onoffProbability: predictions[i].onoffProb,
+          isOn: predictions[i].onoffProb !== null ? predictions[i].onoffProb > 0.5 : predictions[i].power > 200,
+          aggregatePower: aggregatePowers[midpointIndex]
+        })
+      }
+    }
+
+    res.json({
+      appliance,
+      date,
+      windowLength,
+      predictions: results,
+      totalPredictions: results.length
+    })
+
+  } catch (error) {
+    console.error('Seq2point day prediction error:', error)
+    res.status(500).json({
+      error: 'Failed to predict day',
       message: error.message
     })
   }

@@ -233,6 +233,14 @@
         </button>
 
         <button 
+          v-if="trainingInProgress"
+          @click="stopTraining" 
+          class="btn btn-danger"
+        >
+          🛑 Stop Training
+        </button>
+
+        <button 
           @click="loadHistory" 
           :disabled="trainingInProgress"
           class="btn btn-secondary"
@@ -766,6 +774,25 @@ export default {
       }
     },
 
+    async stopTraining() {
+      try {
+        const response = await fetch('http://localhost:3001/api/ml/stop', {
+          method: 'POST'
+        })
+        
+        if (!response.ok) {
+          throw new Error('Failed to stop training')
+        }
+        
+        const data = await response.json()
+        console.log('Training stopped:', data.message)
+        // The training loop will detect the stop and clean up
+      } catch (err) {
+        this.error = 'Failed to stop training: ' + err.message
+        console.error('Stop training error:', err)
+      }
+    },
+
     async loadHistory() {
       try {
         const response = await fetch('http://localhost:3001/api/ml/history')
@@ -1208,6 +1235,15 @@ export default {
 
 .btn-secondary:hover:not(:disabled) {
   background: #555;
+}
+
+.btn-danger {
+  background: #dc3545;
+  color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #c82333;
 }
 
 .btn:disabled {
