@@ -1,5 +1,5 @@
 {
-  "appliance": "water heater",
+  "appliance": "cooktop",
   "windowLength": 599,
   "epochs": 30,
   "batchSize": 128,
@@ -10,12 +10,12 @@
     "std": 921.9043652581381
   },
   "applianceStats": {
-    "mean": 140.60046189376445,
-    "std": 649.1184424686983,
+    "mean": 21.59064665127021,
+    "std": 217.35735678573946,
     "onPowerThreshold": 5,
-    "maxOnPower": 5980
+    "maxOnPower": 4370
   },
-  "trainTime": 14477.203,
+  "trainTime": 13224.616,
   "samplesPerDay": [
     {
       "date": "2025-11-08",
@@ -142,5 +142,5 @@
       "samples": 8727
     }
   ],
-  "createdAt": "2025-12-18T11:23:11.591Z"
+  "createdAt": "2025-12-18T16:52:18.698Z"
 }

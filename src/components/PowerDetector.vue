@@ -44,16 +44,6 @@
         </div>
         <div class="dialog-body">
           <div class="config-item">
-            <label for="stepSize">Sliding Window Step Size (minutes):</label>
-            <select id="stepSize" v-model.number="stepSize">
-              <option :value="1">1 minute (High Precision - Slow)</option>
-              <option :value="3">3 minutes</option>
-              <option :value="5">5 minutes (Recommended - Balanced)</option>
-              <option :value="10">10 minutes (Fast)</option>
-            </select>
-            <span class="config-hint">Smaller steps = more precise but slower</span>
-          </div>
-          <div class="config-item">
             <label for="threshold">Detection Threshold:</label>
             <input 
               type="range" 
@@ -68,27 +58,26 @@
           </div>
           <div class="config-item checkbox">
             <label>
-              <input type="checkbox" v-model="useNewPredictor" />
-              Use new sliding window predictor (multi-label detection)
-            </label>
-          </div>
-          <div class="config-item checkbox">
-            <label>
               <input type="checkbox" v-model="useSeq2Point" @change="onSeq2PointToggle" />
-              Use Seq2Point energy disaggregation model
+              Enable Seq2Point energy disaggregation
             </label>
           </div>
           <div v-if="useSeq2Point" class="config-item">
-            <label for="seq2pointModel">Seq2Point Model:</label>
-            <select id="seq2pointModel" v-model="selectedSeq2PointModel" :disabled="loadingModels || seq2pointModels.length === 0">
-              <option value="" disabled>{{ loadingModels ? 'Loading models...' : (seq2pointModels.length === 0 ? 'No models available' : 'Select a model') }}</option>
-              <option v-for="model in seq2pointModels" :key="model" :value="model">
-                {{ model }}
-              </option>
-            </select>
-            <span class="config-hint" v-if="seq2pointModels.length === 0 && !loadingModels">
+            <label>Seq2Point Models to Analyze:</label>
+            <div v-if="loadingModels" class="config-hint">Loading models...</div>
+            <div v-else-if="seq2pointModels.length === 0" class="config-hint">
               Train a seq2point model first using: node server/ml/seq2point-train.js "appliance_name"
-            </span>
+            </div>
+            <div v-else class="model-checkboxes">
+              <label v-for="model in seq2pointModels" :key="model" class="checkbox-label">
+                <input 
+                  type="checkbox" 
+                  :value="model" 
+                  v-model="selectedSeq2PointModels"
+                />
+                <span>{{ model }}</span>
+              </label>
+            </div>
           </div>
         </div>
         <div class="dialog-footer">
@@ -149,18 +138,22 @@
       </div>
 
       <div class="chart-section">
-        <h3>📊 Summary Statistics</h3>
+        <h3>📊 Energy Breakdown</h3>
         <div class="stats-summary">
-          <div class="stat-item">
-            <span class="label">Appliance Energy:</span>
+          <div class="stat-item highlight">
+            <span class="label">💡 Appliance Energy:</span>
             <span class="value">{{ totalEnergy.toFixed(2) }} Wh</span>
           </div>
-          <div class="stat-item">
-            <span class="label">Standby Energy:</span>
+          <div class="stat-item highlight">
+            <span class="label">🔋 Standby Energy:</span>
             <span class="value">{{ totalStandbyEnergy.toFixed(2) }} Wh</span>
           </div>
-          <div class="stat-item">
-            <span class="label">Total Energy:</span>
+          <div class="stat-item highlight">
+            <span class="label">❓ Other Energy:</span>
+            <span class="value">{{ otherEnergy.toFixed(2) }} Wh</span>
+          </div>
+          <div class="stat-item total">
+            <span class="label">📊 Total Energy:</span>
             <span class="value">{{ totalCombinedEnergy.toFixed(2) }} Wh</span>
           </div>
           <div class="stat-item">
@@ -170,10 +163,6 @@
           <div class="stat-item">
             <span class="label">Unique Activities:</span>
             <span class="value">{{ uniqueTags.length }}</span>
-          </div>
-          <div class="stat-item">
-            <span class="label">Avg Power:</span>
-            <span class="value">{{ avgPower.toFixed(0) }} W</span>
           </div>
         </div>
       </div>
@@ -270,14 +259,12 @@ const showDetailedPredictions = ref(false)
 const showSettingsDialog = ref(false)
 
 // Configuration
-const stepSize = ref(5) // Default 5 minutes
-const threshold = ref(0.25) // Default 25% threshold for multi-label
-const useNewPredictor = ref(false) // Use old predictor by default until tested
+const threshold = ref(0.25) // Default 25% threshold for detection
 
 // Seq2point configuration
-const useSeq2Point = ref(false)
+const useSeq2Point = ref(true) // Enable seq2point by default
 const seq2pointModels = ref([])
-const selectedSeq2PointModel = ref('')
+const selectedSeq2PointModels = ref([]) // Array of selected model names
 const loadingModels = ref(false)
 
 // Appliance filter for power chart
@@ -304,13 +291,18 @@ const totalEnergy = computed(() => {
 })
 
 const totalStandbyEnergy = computed(() => {
-  // Sum of standby energy across all windows
-  return predictions.value.reduce((sum, p) => sum + (p.standbyEnergy || 0), 0)
+  // Get standby energy from energyByTag (calculated from minimum power)
+  return energyByTag.value['standby'] || 0
+})
+
+const otherEnergy = computed(() => {
+  // Other energy = tagged power - standby
+  return energyByTag.value['other'] || 0
 })
 
 const totalCombinedEnergy = computed(() => {
-  // Total energy including standby
-  return totalEnergy.value + totalStandbyEnergy.value
+  // Total energy: appliance + standby + other
+  return totalEnergy.value + totalStandbyEnergy.value + otherEnergy.value
 })
 
 const avgPower = computed(() => {
@@ -322,16 +314,26 @@ const avgPower = computed(() => {
 const energyByTag = computed(() => {
   const byTag = {}
   
-  // Special handling for seq2point: show appliance vs. baseline
-  if (useSeq2Point.value && selectedSeq2PointModel.value && powerData.value.length > 0) {
-    // Calculate total appliance energy from predictions
-    const applianceEnergy = predictions.value.reduce((sum, p) => sum + (p.energy || 0), 0)
+  // Special handling for seq2point: show each appliance separately
+  if (useSeq2Point.value && selectedSeq2PointModels.value.length > 0) {
+    // Calculate energy for each appliance from predictions
+    predictions.value.forEach(p => {
+      const appliance = p.tag
+      if (!byTag[appliance]) {
+        byTag[appliance] = 0
+      }
+      byTag[appliance] += p.energy || 0
+    })
     
-    // Calculate total aggregate energy from raw power data for the day
+    // Calculate total aggregate energy, standby (minimum power), and other
     const dayStartTime = new Date(`${selectedDate.value}T00:00:00`).getTime()
     const dayEndTime = new Date(`${selectedDate.value}T23:59:59`).getTime()
     
+    // Find minimum power reading for standby calculation
+    let minPower = Infinity
     let totalAggregateEnergy = 0
+    let totalStandbyEnergy = 0
+    
     for (let i = 0; i < powerData.value.length - 1; i++) {
       const current = powerData.value[i]
       const next = powerData.value[i + 1]
@@ -344,14 +346,30 @@ const energyByTag = computed(() => {
         const power = parseFloat(current.value || current.state || 0)
         const duration = (nextTime - currentTime) / (1000 * 60 * 60) // hours
         totalAggregateEnergy += power * duration
+        
+        // Track minimum power for standby
+        if (power < minPower) {
+          minPower = power
+        }
+        
+        // Calculate standby energy using minimum power
+        totalStandbyEnergy += minPower * duration
       }
     }
     
-    // Show appliance energy and baseline (everything else)
-    byTag[selectedSeq2PointModel.value] = applianceEnergy
-    const baselineEnergy = Math.max(0, totalAggregateEnergy - applianceEnergy)
-    if (baselineEnergy > 0) {
-      byTag['baseline'] = baselineEnergy
+    // Add standby energy (baseline consumption)
+    if (totalStandbyEnergy > 0 && minPower !== Infinity) {
+      byTag['standby'] = totalStandbyEnergy
+    }
+    
+    // Calculate "other" energy (total aggregate - standby - detected appliances)
+    const totalApplianceEnergy = Object.keys(byTag)
+      .filter(key => key !== 'standby')
+      .reduce((sum, key) => sum + byTag[key], 0)
+    
+    const otherEnergy = Math.max(0, totalAggregateEnergy - totalStandbyEnergy - totalApplianceEnergy)
+    if (otherEnergy > 0) {
+      byTag['other'] = otherEnergy
     }
     
     return byTag
@@ -359,27 +377,12 @@ const energyByTag = computed(() => {
   
   // Regular handling for multi-label or legacy predictions
   predictions.value.forEach(p => {
-    // Handle multi-label: distribute energy among all detected tags
-    if (useNewPredictor.value && p.tags && p.tags.length > 0) {
-      // Multi-label case: split energy among detected tags proportionally
-      const totalProb = p.tags.reduce((sum, t) => sum + t.prob, 0)
-      p.tags.forEach(tagInfo => {
-        const tagName = tagInfo.tag === 'standby' ? 'other' : tagInfo.tag
-        if (!byTag[tagName]) {
-          byTag[tagName] = 0
-        }
-        // Weight energy by probability
-        const weight = totalProb > 0 ? tagInfo.prob / totalProb : 1 / p.tags.length
-        byTag[tagName] += (p.energy || 0) * weight
-      })
-    } else {
-      // Single label case (legacy)
-      const tagName = p.tag === 'standby' ? 'other' : p.tag
-      if (!byTag[tagName]) {
-        byTag[tagName] = 0
-      }
-      byTag[tagName] += p.energy || 0
+    // Single label case (legacy predictor)
+    const tagName = p.tag === 'standby' ? 'other' : p.tag
+    if (!byTag[tagName]) {
+      byTag[tagName] = 0
     }
+    byTag[tagName] += p.energy || 0
   })
   
   // Add baseline as a separate category for the total standby consumption across all periods
@@ -414,11 +417,13 @@ const nextDay = () => {
 
 const getTagColor = (tag) => {
   // Assign special colors for specific tags to avoid conflicts
-  // Both "standby" and "other" should use the same color (light gray)
-  if (tag === 'standby' || tag === 'other') {
-    colorMap.value['standby'] = '#95A5A6' // Light gray
-    colorMap.value['other'] = '#95A5A6' // Same color for consistency
-    return '#95A5A6'
+  if (tag === 'standby') {
+    colorMap.value['standby'] = '#BDC3C7' // Light gray for standby
+    return '#BDC3C7'
+  }
+  if (tag === 'other') {
+    colorMap.value['other'] = '#7F8C8D' // Darker gray for other
+    return '#7F8C8D'
   }
   if (tag === 'baseline') {
     colorMap.value[tag] = '#BDC3C7' // Lighter gray for baseline
@@ -443,8 +448,9 @@ const loadSeq2PointModels = async () => {
       const data = await response.json()
       // Extract just the appliance names from the model objects
       seq2pointModels.value = (data.models || []).map(m => m.appliance)
-      if (seq2pointModels.value.length > 0 && !selectedSeq2PointModel.value) {
-        selectedSeq2PointModel.value = seq2pointModels.value[0]
+      // Select all models by default
+      if (seq2pointModels.value.length > 0 && selectedSeq2PointModels.value.length === 0) {
+        selectedSeq2PointModels.value = [...seq2pointModels.value]
       }
     } else {
       console.error('Failed to load seq2point models')
@@ -529,11 +535,9 @@ const loadAndPredict = async () => {
 
     // Use seq2point API if enabled
     if (useSeq2Point.value) {
-      if (!selectedSeq2PointModel.value) {
-        throw new Error('Please select a seq2point model first')
+      if (selectedSeq2PointModels.value.length === 0) {
+        throw new Error('Please select at least one seq2point model in settings')
       }
-      
-      loadingProgress.value = `Running Seq2Point predictions with ${selectedSeq2PointModel.value}...`
       
       // Transform powerData to ensure it has the right format (power/value field)
       const formattedPowerData = powerData.value.map(dp => ({
@@ -541,125 +545,128 @@ const loadAndPredict = async () => {
         power: parseFloat(dp.power || dp.value || dp.state || 0)
       }))
       
-      const seq2pointResponse = await fetch('http://localhost:3001/api/seq2point/predict-day', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          appliance: selectedSeq2PointModel.value,
-          date: selectedDate.value,
-          powerData: formattedPowerData
-        })
-      })
+      // Run predictions for all selected models
+      const allWindows = []
+      const appliancePowerData = {} // Store predicted power timeline for each appliance
       
-      if (!seq2pointResponse.ok) {
-        const errorText = await seq2pointResponse.text()
-        let errorData
-        try {
-          errorData = JSON.parse(errorText)
-          throw new Error(errorData.error || errorData.message || 'Seq2Point prediction failed')
-        } catch (e) {
-          throw new Error(`Seq2Point prediction failed: ${seq2pointResponse.status}`)
-        }
-      }
-      
-      const seq2pointResult = await seq2pointResponse.json()
-      
-      // Debug: Check the predictions
-      console.log('=== SEQ2POINT PREDICTIONS DEBUG ===')
-      console.log('Total predictions:', seq2pointResult.predictions?.length)
-      console.log('Sample predictions (first 10):')
-      seq2pointResult.predictions?.slice(0, 10).forEach((p, i) => {
-        console.log(`  ${i}: ${new Date(p.timestamp).toLocaleTimeString()} - ${(p.predictedPower || p.power || 0).toFixed(2)}W`)
-      })
-      console.log('Power distribution:')
-      const powers = seq2pointResult.predictions?.map(p => p.predictedPower || p.power || 0) || []
-      const minPower = Math.min(...powers)
-      const maxPower = Math.max(...powers)
-      const avgPowerAll = powers.reduce((sum, p) => sum + p, 0) / powers.length
-      console.log(`  Min: ${minPower.toFixed(2)}W, Max: ${maxPower.toFixed(2)}W, Avg: ${avgPowerAll.toFixed(2)}W`)
-      console.log('=== END DEBUG ===')
-      
-      // Transform seq2point predictions to match the expected format
-      // seq2point returns: { predictions: [{timestamp, power}], totalEnergy, avgPower }
-      // We need to convert to windowed predictions for display
-      modelLoaded.value = true
-      loadingProgress.value = 'Processing seq2point predictions...'
-      
-      // Group predictions into 10-minute windows
-      const windowSize = 10 * 60 * 1000 // 10 minutes in ms
-      const dayStart = new Date(`${selectedDate.value}T00:00:00`).getTime()
-      const dayEnd = new Date(`${selectedDate.value}T23:59:59`).getTime()
-      
-      const windows = []
-      // Use on/off classification from model if available, otherwise fall back to power threshold
-      const hasOnOffClassification = seq2pointResult.predictions.length > 0 && 
-                                      seq2pointResult.predictions[0].onoffProbability !== null &&
-                                      seq2pointResult.predictions[0].onoffProbability !== undefined
-      
-      for (let time = dayStart; time < dayEnd; time += windowSize) {
-        const windowEnd = Math.min(time + windowSize, dayEnd)
-        const windowPredictions = seq2pointResult.predictions.filter(p => {
-          const predTime = new Date(p.timestamp).getTime()
-          return predTime >= time && predTime < windowEnd
+      for (let i = 0; i < selectedSeq2PointModels.value.length; i++) {
+        const appliance = selectedSeq2PointModels.value[i]
+        loadingProgress.value = `Running predictions for ${appliance} (${i + 1}/${selectedSeq2PointModels.value.length})...`
+        
+        const seq2pointResponse = await fetch('http://localhost:3001/api/seq2point/predict-day', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            appliance: appliance,
+            date: selectedDate.value,
+            powerData: formattedPowerData
+          })
         })
         
-        if (windowPredictions.length > 0) {
-          const avgPower = windowPredictions.reduce((sum, p) => sum + (p.predictedPower || p.power || 0), 0) / windowPredictions.length
-          
-          // Use on/off classification if available, otherwise use power threshold
-          let isActive = false
-          let avgOnOffProb = 0
+        if (!seq2pointResponse.ok) {
+          const errorText = await seq2pointResponse.text()
+          let errorData
+          try {
+            errorData = JSON.parse(errorText)
+            console.warn(`Failed to predict ${appliance}:`, errorData.error || errorData.message)
+            continue // Skip this appliance and continue with others
+          } catch (e) {
+            console.warn(`Failed to predict ${appliance}: ${seq2pointResponse.status}`)
+            continue
+          }
+        }
+        
+        const seq2pointResult = await seq2pointResponse.json()
+        
+        // Transform seq2point predictions to match the expected format
+        modelLoaded.value = true
+        
+        // Group predictions into 10-minute windows
+        const windowSize = 10 * 60 * 1000 // 10 minutes in ms
+        const dayStart = new Date(`${selectedDate.value}T00:00:00`).getTime()
+        const dayEnd = new Date(`${selectedDate.value}T23:59:59`).getTime()
+        
+        // Use on/off classification from model if available
+        const hasOnOffClassification = seq2pointResult.predictions.length > 0 && 
+                                        seq2pointResult.predictions[0].onoffProbability !== null &&
+                                        seq2pointResult.predictions[0].onoffProbability !== undefined
+        
+        // First, filter predictions based on on/off threshold
+        const filteredPredictions = seq2pointResult.predictions.map(p => {
+          let onoffProb = 0
           
           if (hasOnOffClassification) {
-            // Count how many predictions in this window are classified as ON
-            const onCount = windowPredictions.filter(p => p.isOn).length
-            avgOnOffProb = windowPredictions.reduce((sum, p) => sum + (p.onoffProbability || 0), 0) / windowPredictions.length
-            // Window is active if >50% of predictions are ON
-            isActive = onCount > windowPredictions.length / 2
+            // Use the on/off classifier probability directly
+            onoffProb = p.onoffProbability || 0
           } else {
-            // Fallback to power threshold
-            isActive = avgPower > 200
-            avgOnOffProb = avgPower > 200 ? 1.0 : 0.0
+            // Fallback: calculate probability based on power level
+            // Normalize power to 0-1 range: 0W = 0%, 500W+ = 100%
+            const power = p.predictedPower || p.power || 0
+            onoffProb = Math.min(1.0, power / 500)
           }
           
-          // Only create a window if the appliance is active AND confidence meets threshold
-          if (isActive && avgOnOffProb >= threshold.value) {
-            const energy = avgPower * 10 / 60 // Convert to Wh for 10-minute window
+          // Apply threshold: if below threshold, set predicted power to 0
+          return {
+            ...p,
+            predictedPower: onoffProb >= threshold.value ? (p.predictedPower || p.power || 0) : 0,
+            onoffProbability: onoffProb,
+            thresholdPassed: onoffProb >= threshold.value
+          }
+        })
+        
+        // Store predicted power timeline for this appliance
+        appliancePowerData[appliance] = filteredPredictions.map(p => ({
+          x: new Date(p.timestamp),
+          y: p.predictedPower,
+          probability: p.onoffProbability
+        }))
+        
+        for (let time = dayStart; time < dayEnd; time += windowSize) {
+          const windowEnd = Math.min(time + windowSize, dayEnd)
+          const windowPredictions = filteredPredictions.filter(p => {
+            const predTime = new Date(p.timestamp).getTime()
+            return predTime >= time && predTime < windowEnd
+          })
+          
+          if (windowPredictions.length > 0) {
+            // Calculate average power only from predictions that passed threshold
+            const activePredictions = windowPredictions.filter(p => p.thresholdPassed)
             
-            windows.push({
-              startTime: format(new Date(time), 'HH:mm'),
-              endTime: format(new Date(windowEnd), 'HH:mm'),
-              tag: selectedSeq2PointModel.value,
-              displayTag: selectedSeq2PointModel.value,
-              confidence: avgOnOffProb,
-              avgPower: avgPower,
-              energy: energy,
-              standbyEnergy: 0,
-              color: getTagColor(selectedSeq2PointModel.value),
-              tags: [{ tag: selectedSeq2PointModel.value, probability: avgOnOffProb }]
-            })
+            if (activePredictions.length > 0) {
+              const avgPower = activePredictions.reduce((sum, p) => sum + p.predictedPower, 0) / activePredictions.length
+              const avgOnOffProb = activePredictions.reduce((sum, p) => sum + p.onoffProbability, 0) / activePredictions.length
+              const energy = avgPower * 10 / 60 // Convert to Wh for 10-minute window
+              
+              allWindows.push({
+                startTime: format(new Date(time), 'HH:mm'),
+                endTime: format(new Date(windowEnd), 'HH:mm'),
+                tag: appliance,
+                displayTag: appliance,
+                confidence: avgOnOffProb,
+                avgPower: avgPower,
+                energy: energy,
+                standbyEnergy: 0,
+                color: getTagColor(appliance),
+                tags: [{ tag: appliance, probability: avgOnOffProb }]
+              })
+            }
           }
         }
       }
       
-      predictions.value = windows
+      // Sort predictions by time (chronologically)
+      allWindows.sort((a, b) => {
+        const timeA = new Date(`${selectedDate.value}T${a.startTime}`).getTime()
+        const timeB = new Date(`${selectedDate.value}T${b.startTime}`).getTime()
+        return timeA - timeB
+      })
       
-      // Store the full predicted power timeline for chart overlay
-      // Map predictions to timeline for drawing the predicted power curve
-      const predictedPowerTimeline = seq2pointResult.predictions.map(p => ({
-        x: new Date(p.timestamp),
-        y: p.predictedPower || p.power || 0
-      }))
+      predictions.value = allWindows
       
-      // Store on/off probability timeline for visualization
-      const onoffProbabilityTimeline = seq2pointResult.predictions.map(p => ({
-        x: new Date(p.timestamp),
-        y: (p.onoffProbability !== null && p.onoffProbability !== undefined) ? p.onoffProbability : null
-      })).filter(p => p.y !== null)
+      // Store all appliance power data for chart overlay
+      powerData.value.appliancePowerData = appliancePowerData
       
-      // Store in a way that renderPowerChart can access
-      powerData.value.predictedPowerData = predictedPowerTimeline
-      powerData.value.onoffProbabilityData = onoffProbabilityTimeline
+      loadingProgress.value = 'Processing predictions...'
       
       // Only render charts if we have predictions
       if (predictions.value.length > 0) {
@@ -672,7 +679,7 @@ const loadAndPredict = async () => {
         }, 100)
       } else {
         // No appliance activity detected
-        error.value = `No ${selectedSeq2PointModel.value} activity detected above 200W threshold on this day`
+        error.value = `No appliance activity detected above the ${(threshold.value * 100).toFixed(0)}% confidence threshold on this day. Try lowering the threshold in settings.`
       }
       
       loading.value = false
@@ -680,31 +687,19 @@ const loadAndPredict = async () => {
       return
     }
 
-    // Call the prediction endpoint with sliding window
-    const endpoint = useNewPredictor.value 
-      ? 'http://localhost:3001/api/ml/predict-day-sliding'
-      : 'http://localhost:3001/api/ml/predict-day'
-    
-    const requestBody = useNewPredictor.value
-      ? {
-          date: selectedDate.value,
-          powerData: powerData.value,
-          stepSize: stepSize.value,
-          threshold: threshold.value
-        }
-      : {
-          date: selectedDate.value,
-          powerData: powerData.value
-        }
+    // Call the legacy prediction endpoint
+    const endpoint = 'http://localhost:3001/api/ml/predict-day'
+    const requestBody = {
+      date: selectedDate.value,
+      powerData: powerData.value
+    }
 
-    loadingProgress.value = useNewPredictor.value 
-      ? `Running ML predictions (${stepSize.value} min steps)...`
-      : 'Running ML predictions...'
+    loadingProgress.value = 'Running ML predictions...'
 
     let result
     
-    // Use fetch with streaming for real-time progress if using new predictor
-    if (useNewPredictor.value) {
+    // Use standard fetch (no streaming needed for legacy predictor)
+    if (false) {
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 
@@ -809,36 +804,9 @@ const loadAndPredict = async () => {
       throw new Error('Invalid prediction result received from server')
     }
     
-    // Handle different response formats
-    console.log('===== PREDICTION RESULT DEBUG =====')
-    console.log('Full result:', JSON.stringify(result, null, 2))
-    console.log('First prediction sample:', result.predictions?.[0])
-    console.log('useNewPredictor:', useNewPredictor.value)
-    
-    if (false && result.predictions) {
-      // New sliding window format with predictions array
-      // The predictor returns predictions with tags array
-      predictions.value = result.predictions.map((pred) => {
-        const tags = pred.tags || []
-        const primaryTag = tags.length > 0 ? tags[0].tag : (pred.tag || 'standby')
-        return {
-          startTime: pred.startTime,
-          endTime: pred.endTime,
-          tag: primaryTag,
-          tags: tags, // All detected tags
-          confidence: pred.avgConfidence || pred.confidence || (tags.length > 0 ? tags[0].prob : 0),
-          avgPower: pred.avgPower || 0,
-          energy: pred.energy || 0,
-          standbyEnergy: pred.standbyEnergy || 0,
-          displayTag: primaryTag === 'standby' ? 'other' : primaryTag,
-          color: getTagColor(primaryTag),
-          allProbabilities: tags.map(t => ({ tag: t.tag, probability: t.prob || t.probability }))
-        }
-      })
-    } else if (result.predictions) {
-      // Legacy format with 10-minute windows
+    // Handle legacy prediction format
+    if (result.predictions) {
       predictions.value = result.predictions.map((p) => {
-        console.log('Processing prediction:', p)
         
         // If there are multiple tags, find the highest confidence tag that is NOT "other" or "standby"
         let displayTag = p.tag
@@ -877,24 +845,14 @@ const loadAndPredict = async () => {
           color: displayColor
         }
       })
-      console.log('Processed predictions sample:', predictions.value[0])
     }
-    console.log('===== END DEBUG =====')
-    
 
     // Render charts only if we have predictions
     if (predictions.value.length > 0) {
       loadingProgress.value = 'Rendering visualizations...'
       await nextTick()
-      console.log('Rendering charts...')
-      console.log('powerChartCanvas:', powerChartCanvas.value)
-      console.log('pieChartCanvas:', pieChartCanvas.value)
-      console.log('predictions length:', predictions.value.length)
-      
       // Wait a bit more for DOM to be ready
       setTimeout(() => {
-        console.log('After timeout - powerChartCanvas:', powerChartCanvas.value)
-        console.log('After timeout - pieChartCanvas:', pieChartCanvas.value)
         renderPowerChart()
         renderPieChart()
       }, 100)
@@ -912,14 +870,9 @@ const loadAndPredict = async () => {
 }
 
 const renderPowerChart = () => {
-  console.log('renderPowerChart called, canvas:', powerChartCanvas.value)
   if (!powerChartCanvas.value) return
-
-  console.log('powerData length:', powerData.value.length)
-  console.log('predictions length:', predictions.value.length)
   
   if (powerData.value.length === 0) {
-    console.warn('No power data available for chart')
     return
   }
 
@@ -947,10 +900,7 @@ const renderPowerChart = () => {
     return !isNaN(time) && !isNaN(d.y) && time >= dayStartTime && time <= dayEndTime
   })
   
-  console.log('dataPoints sample:', dataPoints.slice(0, 3))
-  
   if (dataPoints.length === 0) {
-    console.warn('No valid data points after parsing')
     return
   }
 
@@ -1021,44 +971,32 @@ const renderPowerChart = () => {
     }
   }]
   
-  // If we have predicted power data from seq2point, add it as overlay
-  if (powerData.value.predictedPowerData && useSeq2Point.value) {
-    const applianceColor = selectedSeq2PointModel.value ? getTagColor(selectedSeq2PointModel.value) : '#FF6384'
-    datasets.push({
-      label: `${selectedSeq2PointModel.value || 'Appliance'} Predicted Power`,
-      data: powerData.value.predictedPowerData.filter(d => {
-        const time = d.x.getTime()
-        return time >= dayStartTime && time <= dayEndTime
-      }),
-      borderColor: applianceColor,
-      backgroundColor: 'transparent',
-      borderWidth: 3,
-      borderDash: [5, 5],
-      fill: false,
-      tension: 0.1,
-      pointRadius: 0,
-      pointHoverRadius: 4,
-      yAxisID: 'y'
+  // If we have predicted power data from seq2point, add overlays for each appliance
+  if (powerData.value.appliancePowerData && useSeq2Point.value) {
+    // Add a dataset for each appliance
+    Object.keys(powerData.value.appliancePowerData).forEach(appliance => {
+      const applianceData = powerData.value.appliancePowerData[appliance]
+      const applianceColor = getTagColor(appliance)
+      
+      // Only show if no filter is active, or if this is the filtered appliance
+      if (!selectedAppliance.value || selectedAppliance.value === appliance) {
+        datasets.push({
+          label: `${appliance} Predicted Power`,
+          data: applianceData.filter(d => {
+            const time = d.x.getTime()
+            return time >= dayStartTime && time <= dayEndTime
+          }).map(d => ({ x: d.x, y: d.y })),
+          borderColor: applianceColor,
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          fill: false,
+          tension: 0.1,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          yAxisID: 'y'
+        })
+      }
     })
-    
-    // Add on/off probability as secondary axis if available
-    if (powerData.value.onoffProbabilityData && powerData.value.onoffProbabilityData.length > 0) {
-      datasets.push({
-        label: 'ON/OFF Probability',
-        data: powerData.value.onoffProbabilityData.filter(d => {
-          const time = d.x.getTime()
-          return time >= dayStartTime && time <= dayEndTime
-        }),
-        borderColor: '#9B59B6',
-        backgroundColor: 'rgba(155, 89, 182, 0.1)',
-        borderWidth: 2,
-        fill: true,
-        tension: 0.1,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-        yAxisID: 'y2'
-      })
-    }
   }
 
   powerChart.value = new Chart(ctx, {
@@ -1162,7 +1100,6 @@ const renderPowerChart = () => {
 }
 
 const renderPieChart = () => {
-  console.log('renderPieChart called, canvas:', pieChartCanvas.value)
   if (!pieChartCanvas.value) return
 
   // Destroy existing chart
@@ -1233,7 +1170,8 @@ const renderPieChart = () => {
 
 // Lifecycle
 onMounted(() => {
-  // Don't auto-load on mount - wait for user to click Analyze button
+  // Load available seq2point models since it's the default
+  loadSeq2PointModels()
 })
 
 // Watch for sessionId changes - don't auto-analyze, just clear any error state
@@ -1419,6 +1357,44 @@ onUnmounted(() => {
   width: 18px;
   height: 18px;
   cursor: pointer;
+}
+
+.model-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.checkbox-label:hover {
+  background: #f0f0f0;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.checkbox-label span {
+  font-size: 0.95rem;
+  color: #2c3e50;
+  font-weight: 500;
 }
 
 .date-selector {
@@ -1657,6 +1633,22 @@ onUnmounted(() => {
   color: #2c3e50;
   font-weight: 700;
   font-size: 1.1rem;
+}
+
+.stat-item.highlight {
+  background: #e8f5e9;
+  border-left: 4px solid #4caf50;
+}
+
+.stat-item.total {
+  background: #e3f2fd;
+  border-left: 4px solid #2196f3;
+  font-size: 1.05rem;
+}
+
+.stat-item.total .value {
+  font-size: 1.2rem;
+  color: #1976d2;
 }
 
 .predictions-table {
