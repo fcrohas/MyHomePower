@@ -2261,13 +2261,28 @@ app.post('/api/seq2point/predict-day', async (req, res) => {
     // Generate predictions with sliding window
     const predictions = []
     const batchSize = 100 // Process in batches for efficiency
+    
+    // Pad the end with last value so we can predict up to the last timestamp
+    // We need enough padding so that even when starting at the last position,
+    // we can form a complete window
+    const paddedNormalized = [...normalized]
+    const lastValue = normalized[normalized.length - 1]
+    for (let i = 0; i < windowLength - 1; i++) {
+      paddedNormalized.push(lastValue)
+    }
+    
+    // Calculate how many windows we need to cover all timestamps
+    // The midpoint of window at position i is at i + offset
+    // To reach the last timestamp (normalized.length - 1), we need:
+    // i + offset = normalized.length - 1, so i = normalized.length - 1 - offset
+    const maxWindowStart = normalized.length - 1 - offset
 
-    for (let i = 0; i <= normalized.length - windowLength; i += batchSize) {
-      const batchEnd = Math.min(i + batchSize, normalized.length - windowLength + 1)
+    for (let i = 0; i <= maxWindowStart; i += batchSize) {
+      const batchEnd = Math.min(i + batchSize, maxWindowStart + 1)
       const windows = []
       
       for (let j = i; j < batchEnd; j++) {
-        windows.push(normalized.slice(j, j + windowLength))
+        windows.push(paddedNormalized.slice(j, j + windowLength))
       }
 
       // Batch prediction
