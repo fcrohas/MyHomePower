@@ -329,10 +329,18 @@ const energyByTag = computed(() => {
     const dayStartTime = new Date(`${selectedDate.value}T00:00:00`).getTime()
     const dayEndTime = new Date(`${selectedDate.value}T23:59:59`).getTime()
     
+    // Build a set of tagged time periods (times when appliances are detected)
+    const taggedPeriods = predictions.value.map(p => ({
+      start: new Date(`${selectedDate.value}T${p.startTime}`).getTime(),
+      end: new Date(`${selectedDate.value}T${p.endTime}`).getTime()
+    }))
+    
     // Find minimum power reading for standby calculation
     let minPower = Infinity
     let totalAggregateEnergy = 0
-    let totalStandbyEnergy = 0
+    let untaggedEnergy = 0
+    let untaggedDuration = 0
+    let totalDayDuration = 0
     
     for (let i = 0; i < powerData.value.length - 1; i++) {
       const current = powerData.value[i]
@@ -345,29 +353,41 @@ const energyByTag = computed(() => {
       if (currentTime >= dayStartTime && currentTime <= dayEndTime) {
         const power = parseFloat(current.value || current.state || 0)
         const duration = (nextTime - currentTime) / (1000 * 60 * 60) // hours
-        totalAggregateEnergy += power * duration
+        const energy = power * duration
+        
+        totalAggregateEnergy += energy
+        totalDayDuration += duration
         
         // Track minimum power for standby
         if (power < minPower) {
           minPower = power
         }
         
-        // Calculate standby energy using minimum power
-        totalStandbyEnergy += minPower * duration
+        // Check if this timestamp falls within any tagged period
+        const isTagged = taggedPeriods.some(period => 
+          currentTime >= period.start && currentTime < period.end
+        )
+        
+        // If not tagged, accumulate untagged energy
+        if (!isTagged) {
+          untaggedEnergy += energy
+          untaggedDuration += duration
+        }
       }
     }
+    
+    // Calculate standby energy: minimum power × total day duration
+    const totalStandbyEnergy = minPower !== Infinity ? minPower * totalDayDuration : 0
     
     // Add standby energy (baseline consumption)
     if (totalStandbyEnergy > 0 && minPower !== Infinity) {
       byTag['standby'] = totalStandbyEnergy
     }
     
-    // Calculate "other" energy (total aggregate - standby - detected appliances)
-    const totalApplianceEnergy = Object.keys(byTag)
-      .filter(key => key !== 'standby')
-      .reduce((sum, key) => sum + byTag[key], 0)
-    
-    const otherEnergy = Math.max(0, totalAggregateEnergy - totalStandbyEnergy - totalApplianceEnergy)
+    // Calculate "other" energy: untagged power above standby
+    // Other = energy during untagged periods - standby baseline for those periods
+    const standbyDuringUntagged = minPower !== Infinity ? minPower * untaggedDuration : 0
+    const otherEnergy = Math.max(0, untaggedEnergy - standbyDuringUntagged)
     if (otherEnergy > 0) {
       byTag['other'] = otherEnergy
     }
@@ -548,6 +568,7 @@ const loadAndPredict = async () => {
       // Run predictions for all selected models
       const allWindows = []
       const appliancePowerData = {} // Store predicted power timeline for each appliance
+      const windowSize = 10 * 60 * 1000 // 10 minutes in ms - define at broader scope
       
       for (let i = 0; i < selectedSeq2PointModels.value.length; i++) {
         const appliance = selectedSeq2PointModels.value[i]
@@ -582,7 +603,6 @@ const loadAndPredict = async () => {
         modelLoaded.value = true
         
         // Group predictions into 10-minute windows
-        const windowSize = 10 * 60 * 1000 // 10 minutes in ms
         const dayStart = new Date(`${selectedDate.value}T00:00:00`).getTime()
         const dayEnd = new Date(`${selectedDate.value}T23:59:59`).getTime()
         
@@ -647,7 +667,8 @@ const loadAndPredict = async () => {
                 energy: energy,
                 standbyEnergy: 0,
                 color: getTagColor(appliance),
-                tags: [{ tag: appliance, probability: avgOnOffProb }]
+                tags: [{ tag: appliance, probability: avgOnOffProb }],
+                windowTime: time // Store window start time for limiting
               })
             }
           }
@@ -659,6 +680,55 @@ const loadAndPredict = async () => {
         const timeA = new Date(`${selectedDate.value}T${a.startTime}`).getTime()
         const timeB = new Date(`${selectedDate.value}T${b.startTime}`).getTime()
         return timeA - timeB
+      })
+      
+      // Limit total predicted power per window to maximum actual power
+      // Group windows by time period
+      const windowsByTime = {}
+      allWindows.forEach(window => {
+        const key = window.startTime
+        if (!windowsByTime[key]) {
+          windowsByTime[key] = []
+        }
+        windowsByTime[key].push(window)
+      })
+      
+      // For each time period with multiple appliances, check if total exceeds actual max power
+      Object.keys(windowsByTime).forEach(timeKey => {
+        const windows = windowsByTime[timeKey]
+        if (windows.length > 1) {
+          // Multiple appliances detected in this period
+          const totalPredictedPower = windows.reduce((sum, w) => sum + w.avgPower, 0)
+          
+          // Find maximum actual power in this window
+          const windowStart = new Date(`${selectedDate.value}T${timeKey}`).getTime()
+          const windowEnd = windowStart + windowSize
+          
+          const actualPowersInWindow = powerData.value
+            .filter(d => {
+              const time = new Date(d.timestamp || d.last_changed || d.last_updated).getTime()
+              return time >= windowStart && time < windowEnd
+            })
+            .map(d => parseFloat(d.value || d.state || 0))
+          
+          const maxActualPower = actualPowersInWindow.length > 0 
+            ? Math.max(...actualPowersInWindow) 
+            : totalPredictedPower
+          
+          // If total predicted exceeds actual, scale down proportionally
+          if (totalPredictedPower > maxActualPower) {
+            // Sort windows by predicted power (descending) to identify highest consumers
+            windows.sort((a, b) => b.avgPower - a.avgPower)
+            
+            const scaleFactor = maxActualPower / totalPredictedPower
+            
+            // Apply scaling to all appliances proportionally
+            windows.forEach(window => {
+              window.avgPower = window.avgPower * scaleFactor
+              window.energy = window.avgPower * 10 / 60 // Recalculate energy
+            })
+          }
+        }
       })
       
       predictions.value = allWindows
