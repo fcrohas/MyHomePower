@@ -56,11 +56,15 @@
             <span class="config-value">{{ (threshold * 100).toFixed(0) }}%</span>
             <span class="config-hint">Higher = fewer false positives</span>
           </div>
+          <div class="config-item">
+            <h4 class="section-title">Disaggregation Method</h4>
+          </div>
           <div class="config-item checkbox">
             <label>
-              <input type="checkbox" v-model="useSeq2Point" @change="onSeq2PointToggle" />
+              <input type="checkbox" v-model="useSeq2Point" @change="onMethodChange" />
               Enable Seq2Point energy disaggregation
             </label>
+            <span class="config-hint-inline">Supervised ML - requires training per appliance</span>
           </div>
           <div v-if="useSeq2Point" class="config-item">
             <label>Seq2Point Models to Analyze:</label>
@@ -77,6 +81,67 @@
                 />
                 <span>{{ model }}</span>
               </label>
+            </div>
+          </div>
+          
+          <div class="config-item checkbox">
+            <label>
+              <input type="checkbox" v-model="useGSP" @change="onMethodChange" />
+              Enable GSP energy disaggregation
+            </label>
+            <span class="config-hint-inline">Training-less - auto-discovers all appliances</span>
+          </div>
+          <div v-if="useGSP" class="config-item">
+            <label>GSP Configuration:</label>
+            <div class="gsp-config">
+              <div class="gsp-param">
+                <label for="gsp-sigma">Clustering Sensitivity (σ):</label>
+                <input 
+                  type="range" 
+                  id="gsp-sigma" 
+                  v-model.number="gspConfig.sigma" 
+                  min="5" 
+                  max="50" 
+                  step="5"
+                />
+                <span class="config-value">{{ gspConfig.sigma }}</span>
+              </div>
+              <div class="gsp-param">
+                <label for="gsp-threshold-pos">Min ON Power (W):</label>
+                <input 
+                  type="range" 
+                  id="gsp-threshold-pos" 
+                  v-model.number="gspConfig.T_Positive" 
+                  min="10" 
+                  max="100" 
+                  step="10"
+                />
+                <span class="config-value">{{ gspConfig.T_Positive }}</span>
+              </div>
+              <div class="gsp-param">
+                <label for="gsp-threshold-neg">Min OFF Power (W):</label>
+                <input 
+                  type="range" 
+                  id="gsp-threshold-neg" 
+                  v-model.number="gspConfig.T_Negative" 
+                  min="-100" 
+                  max="-10" 
+                  step="10"
+                />
+                <span class="config-value">{{ gspConfig.T_Negative }}</span>
+              </div>
+              <div class="gsp-param">
+                <label for="gsp-instances">Min Activations:</label>
+                <input 
+                  type="range" 
+                  id="gsp-instances" 
+                  v-model.number="gspConfig.instancelimit" 
+                  min="2" 
+                  max="10" 
+                  step="1"
+                />
+                <span class="config-value">{{ gspConfig.instancelimit }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -266,6 +331,18 @@ const useSeq2Point = ref(true) // Enable seq2point by default
 const seq2pointModels = ref([])
 const selectedSeq2PointModels = ref([]) // Array of selected model names
 const loadingModels = ref(false)
+
+// GSP configuration
+const useGSP = ref(false) // GSP disabled by default
+const gspConfig = ref({
+  sigma: 20,              // Gaussian kernel parameter
+  ri: 0.15,               // Coefficient of variation threshold
+  T_Positive: 20,         // Positive event threshold (Watts)
+  T_Negative: -20,        // Negative event threshold (Watts)
+  alpha: 0.5,             // Weight for magnitude matching
+  beta: 0.5,              // Weight for temporal matching
+  instancelimit: 3        // Minimum appliance ON instances
+})
 
 // Appliance filter for power chart
 const selectedAppliance = ref(null)
@@ -543,9 +620,16 @@ const loadSeq2PointModels = async () => {
   }
 }
 
-const onSeq2PointToggle = () => {
+const onMethodChange = () => {
+  // Load seq2point models if enabled and not loaded
   if (useSeq2Point.value && seq2pointModels.value.length === 0) {
     loadSeq2PointModels()
+  }
+  
+  // Ensure at least one method is enabled
+  if (!useSeq2Point.value && !useGSP.value) {
+    // If both are disabled, re-enable seq2point as default
+    useSeq2Point.value = true
   }
 }
 
@@ -834,6 +918,134 @@ const loadAndPredict = async () => {
       return
     }
 
+    // Use GSP API if enabled
+    if (useGSP.value) {
+      loadingProgress.value = 'Running GSP disaggregation...'
+      
+      // Transform powerData to ensure it has the right format
+      const formattedPowerData = powerData.value.map(dp => ({
+        timestamp: dp.timestamp || dp.last_changed || dp.last_updated,
+        power: parseFloat(dp.power || dp.value || dp.state || 0)
+      }))
+      
+      // Call GSP API
+      const gspResponse = await fetch('http://localhost:3001/api/gsp/analyze-day', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: selectedDate.value,
+          powerData: formattedPowerData,
+          config: gspConfig.value
+        })
+      })
+      
+      if (!gspResponse.ok) {
+        const errorText = await gspResponse.text()
+        let errorData
+        try {
+          errorData = JSON.parse(errorText)
+          throw new Error(errorData.error || errorData.message || 'GSP disaggregation failed')
+        } catch (e) {
+          throw new Error(`GSP disaggregation failed: ${gspResponse.status}`)
+        }
+      }
+      
+      const gspResult = await gspResponse.json()
+      
+      if (!gspResult.success) {
+        throw new Error(gspResult.message || 'GSP disaggregation failed')
+      }
+      
+      // Transform GSP results to prediction format
+      modelLoaded.value = true
+      const allWindows = []
+      const windowSize = 10 * 60 * 1000 // 10 minutes in ms
+      
+      // For each appliance found by GSP
+      if (gspResult.appliances && gspResult.appliances.length > 0) {
+        loadingProgress.value = `Processing ${gspResult.appliances.length} detected appliances...`
+        
+        for (const appliance of gspResult.appliances) {
+          const applianceTimeseries = appliance.timeseries || []
+          
+          // Group appliance activity into 10-minute windows
+          const dayStart = new Date(`${selectedDate.value}T00:00:00`).getTime()
+          const dayEnd = new Date(`${selectedDate.value}T23:59:59`).getTime()
+          
+          for (let time = dayStart; time < dayEnd; time += windowSize) {
+            const windowEnd = Math.min(time + windowSize, dayEnd)
+            
+            // Find appliance power readings in this window
+            const windowReadings = applianceTimeseries.filter(reading => {
+              const readingTime = new Date(reading.timestamp).getTime()
+              return readingTime >= time && readingTime < windowEnd && reading.power > 0
+            })
+            
+            if (windowReadings.length > 0) {
+              // Calculate average power and energy for this window
+              const avgPower = windowReadings.reduce((sum, r) => sum + r.power, 0) / windowReadings.length
+              
+              // Use trapezoidal integration for energy
+              let windowEnergy = 0
+              for (let i = 0; i < windowReadings.length - 1; i++) {
+                const current = windowReadings[i]
+                const next = windowReadings[i + 1]
+                const currentTime = new Date(current.timestamp).getTime()
+                const nextTime = new Date(next.timestamp).getTime()
+                const duration = (nextTime - currentTime) / (1000 * 60 * 60) // hours
+                
+                if (duration > 0 && duration < 1) {
+                  const avgWindowPower = (current.power + next.power) / 2
+                  windowEnergy += avgWindowPower * duration
+                }
+              }
+              
+              allWindows.push({
+                startTime: format(new Date(time), 'HH:mm'),
+                endTime: format(new Date(windowEnd), 'HH:mm'),
+                tag: appliance.name,
+                displayTag: appliance.name,
+                confidence: 0.8, // GSP doesn't provide confidence, use fixed value
+                avgPower: avgPower,
+                energy: windowEnergy,
+                standbyEnergy: 0,
+                color: getTagColor(appliance.name),
+                tags: [{ tag: appliance.name, probability: 0.8 }]
+              })
+            }
+          }
+        }
+        
+        // Sort predictions by time
+        allWindows.sort((a, b) => {
+          const timeA = new Date(`${selectedDate.value}T${a.startTime}`).getTime()
+          const timeB = new Date(`${selectedDate.value}T${b.startTime}`).getTime()
+          return timeA - timeB
+        })
+        
+        predictions.value = allWindows
+        loadingProgress.value = 'Processing predictions...'
+        
+        // Render charts if we have predictions
+        if (predictions.value.length > 0) {
+          loadingProgress.value = 'Rendering visualizations...'
+          await nextTick()
+          setTimeout(() => {
+            renderPowerChart()
+            renderPieChart()
+          }, 100)
+        } else {
+          error.value = gspResult.message || 'No appliances detected by GSP'
+        }
+      } else {
+        error.value = gspResult.message || 'GSP did not detect any appliances. Try adjusting the configuration parameters.'
+      }
+      
+      loading.value = false
+      loadingProgress.value = ''
+      return
+    }
+
     // Call the legacy prediction endpoint
     const endpoint = 'http://localhost:3001/api/ml/predict-day'
     const requestBody = {
@@ -1093,6 +1305,20 @@ const renderPowerChart = () => {
     })
   }
 
+  // Calculate minimum power for standby line
+  let minPower = Infinity
+  dataPoints.forEach(d => {
+    if (d.y < minPower) {
+      minPower = d.y
+    }
+  })
+  
+  // Create horizontal line data for minimum power
+  const minPowerLine = minPower !== Infinity ? [
+    { x: dataPoints[0].x, y: minPower },
+    { x: dataPoints[dataPoints.length - 1].x, y: minPower }
+  ] : []
+
   // Build datasets array - start with aggregate power
   const datasets = [{
     label: selectedAppliance.value ? `Power (W) - ${selectedAppliance.value}` : 'Power (W)',
@@ -1117,6 +1343,24 @@ const renderPowerChart = () => {
       }
     }
   }]
+  
+  // Add minimum standby power line if available
+  if (minPowerLine.length > 0) {
+    datasets.push({
+      label: `Min Standby Power (${minPower.toFixed(0)} W)`,
+      data: minPowerLine,
+      borderColor: '#95a5a6',
+      backgroundColor: 'transparent',
+      borderWidth: 1.5,
+      borderDash: [5, 5],
+      fill: false,
+      tension: 0,
+      pointRadius: 0,
+      pointHoverRadius: 0,
+      yAxisID: 'y',
+      order: 999 // Draw behind other lines
+    })
+  }
   
   // If we have predicted power data from seq2point, add overlays for each appliance
   if (powerData.value.appliancePowerData && useSeq2Point.value) {
@@ -1197,6 +1441,8 @@ const renderPowerChart = () => {
                 return `${context.dataset.label}: ${(context.parsed.y * 100).toFixed(1)}%`
               } else if (context.dataset.label.includes('Predicted')) {
                 return `${context.dataset.label}: ${context.parsed.y.toFixed(0)} W`
+              } else if (context.dataset.label.includes('Min Standby')) {
+                return `${context.dataset.label}: ${context.parsed.y.toFixed(0)} W`
               }
               
               return [
@@ -1228,18 +1474,6 @@ const renderPowerChart = () => {
             text: 'Power (W)'
           },
           position: 'left'
-        },
-        y2: {
-          beginAtZero: true,
-          max: 1,
-          title: {
-            display: true,
-            text: 'ON/OFF Probability'
-          },
-          position: 'right',
-          grid: {
-            drawOnChartArea: false
-          }
         }
       }
     }
@@ -1542,6 +1776,60 @@ onUnmounted(() => {
   font-size: 0.95rem;
   color: #2c3e50;
   font-weight: 500;
+}
+
+.section-title {
+  margin: 1rem 0 0.5rem 0;
+  font-size: 1rem;
+  color: #2c3e50;
+  font-weight: 600;
+  border-bottom: 2px solid #e0e0e0;
+  padding-bottom: 0.5rem;
+}
+
+.config-hint-inline {
+  font-size: 0.8rem;
+  color: #95a5a6;
+  font-style: italic;
+  margin-left: 0.5rem;
+}
+
+.gsp-config {
+  padding: 1rem;
+  background: #f8f9fa;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+}
+
+.gsp-param {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+  gap: 1rem;
+}
+
+.gsp-param:last-child {
+  margin-bottom: 0;
+}
+
+.gsp-param label {
+  flex: 1;
+  font-size: 0.9rem;
+  color: #555;
+  font-weight: 500;
+}
+
+.gsp-param input[type="range"] {
+  flex: 2;
+  cursor: pointer;
+}
+
+.gsp-param .config-value {
+  min-width: 45px;
+  text-align: right;
+  font-weight: 600;
+  color: #3498db;
 }
 
 .date-selector {

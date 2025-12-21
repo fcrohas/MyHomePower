@@ -28,3 +28,8 @@ dist-ssr
 *.sln
 *.sw?
 data/
+venv/
+__pycache__/
+*.pyc
+samplecode/
+native/

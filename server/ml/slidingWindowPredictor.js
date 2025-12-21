@@ -1,4 +1,4 @@
-import * as tf from '@tensorflow/tfjs-node'
+import * as tf from '@tensorflow/tfjs-node-gpu'
 
 /**
  * Sliding Window Predictor - Simple implementation using base predictor logic

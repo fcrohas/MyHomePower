@@ -5,12 +5,13 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
-import * as tf from '@tensorflow/tfjs-node'
+import * as tf from '@tensorflow/tfjs-node-gpu'
 import { PowerTagPredictor } from './ml/model.js'
 import { SlidingWindowPredictor } from './ml/slidingWindowPredictor.js'
 import { PowerAutoencoder } from './ml/autoencoder.js'
 import { loadAllData, prepareTrainingData, createTensors, preparePredictionInput } from './ml/dataPreprocessing.js'
 import { prepareSeq2PointInput, denormalizePower } from './ml/seq2pointPreprocessing.js'
+import { disaggregatePower } from './ml/gspDisaggregator.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -2388,6 +2389,98 @@ app.listen(PORT, () => {
       console.warn('⚠️ Failed to load training metadata:', err.message)
     }
   }
+})
+
+// ============================================================
+// GSP NILM ENDPOINTS
+// ============================================================
+
+// GSP Disaggregation - Analyze day
+app.post('/api/gsp/analyze-day', async (req, res) => {
+  try {
+    const { date, powerData, config } = req.body
+
+    if (!date) {
+      return res.status(400).json({ error: 'Missing date parameter' })
+    }
+
+    if (!powerData || !Array.isArray(powerData)) {
+      return res.status(400).json({ error: 'Missing or invalid powerData array' })
+    }
+
+    // Format power data for GSP
+    const formattedData = powerData.map(dp => ({
+      timestamp: dp.timestamp || dp.last_changed || dp.last_updated,
+      power: parseFloat(dp.power || dp.value || dp.state || 0)
+    }))
+
+    console.log(`Running GSP disaggregation for ${date} with ${formattedData.length} data points`)
+
+    // Run GSP disaggregation (pure JavaScript - no Python!)
+    const result = disaggregatePower(formattedData, config || null)
+
+    res.json({
+      success: true,
+      date,
+      appliances: result.appliances,
+      numAppliances: result.numAppliances,
+      config: result.config,
+      message: result.message
+    })
+
+  } catch (error) {
+    console.error('GSP analyze-day error:', error)
+    res.status(500).json({
+      error: 'Failed to run GSP analysis',
+      message: error.message
+    })
+  }
+})
+
+// Get GSP configuration info
+app.get('/api/gsp/config', (req, res) => {
+  res.json({
+    algorithm: 'GSP (Graph Signal Processing)',
+    description: 'Training-less energy disaggregation using graph signal processing',
+    trainingRequired: false,
+    parameters: {
+      sigma: {
+        default: 20,
+        description: 'Gaussian kernel parameter for clustering',
+        range: [5, 50]
+      },
+      ri: {
+        default: 0.15,
+        description: 'Coefficient of variation threshold',
+        range: [0.05, 0.3]
+      },
+      T_Positive: {
+        default: 20,
+        description: 'Positive event threshold in Watts',
+        range: [10, 100]
+      },
+      T_Negative: {
+        default: -20,
+        description: 'Negative event threshold in Watts',
+        range: [-100, -10]
+      },
+      alpha: {
+        default: 0.5,
+        description: 'Weight for magnitude matching (0-1)',
+        range: [0, 1]
+      },
+      beta: {
+        default: 0.5,
+        description: 'Weight for temporal matching (0-1)',
+        range: [0, 1]
+      },
+      instancelimit: {
+        default: 3,
+        description: 'Minimum number of appliance ON instances',
+        range: [2, 10]
+      }
+    }
+  })
 })
 
 // Graceful shutdown
