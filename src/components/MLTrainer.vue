@@ -1,8 +1,8 @@
 <template>
   <div class="ml-trainer">
     <div class="header">
-      <h2>🧠 ML Tag Predictor</h2>
-      <p>Train a deep learning model to predict power usage tags</p>
+      <h2>🧠 Seq2Point NILM Model</h2>
+      <p>Train a deep learning model to predict individual appliance power consumption</p>
     </div>
 
     <!-- Training Controls -->
@@ -24,27 +24,25 @@
             <span class="metadata-value">{{ trainingMetadata.datasetInfo?.totalSamples?.toLocaleString() || 'N/A' }}</span>
           </div>
           <div class="metadata-item">
-            <span class="metadata-label">Unique Tags:</span>
-            <span class="metadata-value">{{ trainingMetadata.uniqueTags?.length || 0 }}</span>
+            <span class="metadata-label">Appliance:</span>
+            <span class="metadata-value">{{ trainingMetadata.appliance || 'N/A' }}</span>
           </div>
         </div>
-        <div v-if="trainingMetadata.uniqueTags && trainingMetadata.uniqueTags.length > 0" class="tags-display">
-          <span class="metadata-label">Tags:</span>
-          <div class="tags-list">
-            <span v-for="tag in trainingMetadata.uniqueTags" :key="tag" class="tag-chip">{{ tag }}</span>
-          </div>
+        <div v-if="trainingMetadata.windowLength" class="tags-display">
+          <span class="metadata-label">Window Length:</span>
+          <span class="tag-chip">{{ trainingMetadata.windowLength }} timesteps</span>
         </div>
       </div>
 
       <div class="info-card">
-        <h3>Model Architecture</h3>
-        <p>5 × CNN1D (10-minute windows) → LSTM → Dense Output</p>
-        <p class="detail">Input: 50 minutes of power data | Output: Predicted tag for next 10 minutes</p>
+        <h3>Seq2Point Architecture</h3>
+        <p>5 × Conv2D Layers → Flatten → Dense(1024) → Power Output</p>
+        <p class="detail">Input: 599 timesteps of aggregate power | Output: Appliance power at midpoint (regression)</p>
       </div>
 
-      <!-- Tag Selection Section -->
+      <!-- Appliance Selection Section -->
       <div class="tag-selection-card">
-        <h3>🏷️ Training Configuration</h3>
+        <h3>⚡ Training Configuration</h3>
         
         <!-- Date Range Selection -->
         <div class="date-range-section">
@@ -84,52 +82,33 @@
           </div>
         </div>
         
-        <!-- Tag Selection -->
+        <!-- Appliance Selection -->
         <div class="tag-selection-section">
-          <h4>🏷️ Select Tags</h4>
-          <p class="tag-selection-description">Choose which tags to train the model on (leave all unchecked to train on all tags)</p>
+          <h4>⚡ Select Appliance</h4>
+          <p class="tag-selection-description">Choose which appliance to train the seq2point model for (one appliance per model)</p>
         
-        <div v-if="loadingTags" class="loading-tags">Loading available tags...</div>
+        <div v-if="loadingTags" class="loading-tags">Loading available appliances...</div>
         
-        <div v-else-if="availableTags.length > 0" class="tags-selection-grid">
+        <div v-else-if="availableTags.length > 0" class="appliance-selection">
           <label 
             v-for="tag in availableTags" 
             :key="tag"
-            class="tag-checkbox-label"
-            :class="{ 'tag-selected': selectedTags.includes(tag) }"
+            class="appliance-radio-label"
+            :class="{ 'appliance-selected': selectedAppliance === tag }"
           >
             <input 
-              type="checkbox"
+              type="radio"
               :value="tag"
-              v-model="selectedTags"
+              v-model="selectedAppliance"
               :disabled="trainingInProgress"
+              name="appliance"
             />
-            <span class="tag-name">{{ tag }}</span>
+            <span class="appliance-name">{{ tag }}</span>
           </label>
         </div>
         
         <div v-else class="no-tags-message">
-          No tags found in data files. Please add some tags first.
-        </div>
-        
-        <div v-if="availableTags.length > 0" class="tag-selection-actions">
-          <button 
-            @click="selectAllTags"
-            :disabled="trainingInProgress"
-            class="btn-tag-action"
-          >
-            Select All
-          </button>
-          <button 
-            @click="clearAllTags"
-            :disabled="trainingInProgress"
-            class="btn-tag-action"
-          >
-            Clear All
-          </button>
-          <span v-if="selectedTags.length > 0" class="selected-count">
-            {{ selectedTags.length }} tag(s) selected
-          </span>
+          No appliances found in data files. Please add some tags first.
         </div>
         </div>
         
@@ -138,6 +117,22 @@
           <h4>🛑 Training Configuration</h4>
           
           <div class="training-config-params">
+            <div class="param-input-group">
+              <label for="windowLength">Window Length:</label>
+              <input 
+                id="windowLength"
+                v-model.number="windowLength"
+                type="number"
+                min="299"
+                max="999"
+                step="100"
+                :disabled="trainingInProgress"
+                class="param-input"
+                title="Number of timesteps in input window (odd numbers recommended)"
+              />
+              <span class="param-hint">Input window size (default: 599, must be odd)</span>
+            </div>
+            
             <div class="param-input-group">
               <label for="maxEpochs">Max Epochs:</label>
               <input 
@@ -151,6 +146,22 @@
                 title="Maximum number of training epochs"
               />
               <span class="param-hint">Maximum number of training epochs</span>
+            </div>
+            
+            <div class="param-input-group">
+              <label for="batchSize">Batch Size:</label>
+              <input 
+                id="batchSize"
+                v-model.number="batchSize"
+                type="number"
+                min="100"
+                max="2000"
+                step="100"
+                :disabled="trainingInProgress"
+                class="param-input"
+                title="Training batch size"
+              />
+              <span class="param-hint">Number of samples per batch</span>
             </div>
           </div>
           
@@ -265,8 +276,8 @@
               <th>Date</th>
               <th>Days</th>
               <th>Samples</th>
-              <th>Tags</th>
-              <th>Val Accuracy</th>
+              <th>Appliance</th>
+              <th>Val MAE</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
@@ -294,10 +305,10 @@
               <td>{{ formatDate(model.trainedAt) }}</td>
               <td>{{ model.datasetInfo?.numberOfDays || 'N/A' }}</td>
               <td>{{ model.datasetInfo?.totalSamples?.toLocaleString() || 'N/A' }}</td>
-              <td>{{ model.uniqueTags?.length || 0 }}</td>
+              <td>{{ model.appliance || 'N/A' }}</td>
               <td>
-                <span class="accuracy-badge" :class="getAccuracyClass(model.finalMetrics?.valAccuracy)">
-                  {{ (model.finalMetrics?.valAccuracy * 100).toFixed(2) }}%
+                <span class="accuracy-badge" :class="getMaeClass(model.finalMetrics?.valMae)">
+                  {{ model.finalMetrics?.valMae ? model.finalMetrics.valMae.toFixed(2) + ' W' : 'N/A' }}
                 </span>
               </td>
               <td>
@@ -342,20 +353,20 @@
       <!-- Current Metrics -->
       <div v-if="currentMetrics" class="metrics-grid">
         <div class="metric-card">
-          <div class="metric-label">Loss</div>
+          <div class="metric-label">MSE (Loss)</div>
           <div class="metric-value">{{ currentMetrics.loss.toFixed(4) }}</div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">Accuracy</div>
-          <div class="metric-value">{{ (currentMetrics.accuracy * 100).toFixed(2) }}%</div>
+          <div class="metric-label">MAE</div>
+          <div class="metric-value">{{ currentMetrics.mae ? currentMetrics.mae.toFixed(2) : 'N/A' }} W</div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">Val Loss</div>
+          <div class="metric-label">Val MSE</div>
           <div class="metric-value">{{ currentMetrics.valLoss.toFixed(4) }}</div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">Val Accuracy</div>
-          <div class="metric-value">{{ (currentMetrics.valAccuracy * 100).toFixed(2) }}%</div>
+          <div class="metric-label">Val MAE</div>
+          <div class="metric-value">{{ currentMetrics.valMae ? currentMetrics.valMae.toFixed(2) : 'N/A' }} W</div>
         </div>
       </div>
 
@@ -405,7 +416,7 @@ export default {
       savingModelName: false,
       newModelName: '',
       availableTags: [],
-      selectedTags: [],
+      selectedAppliance: '',
       loadingTags: false,
       startDate: '',
       endDate: '',
@@ -413,7 +424,9 @@ export default {
       patience: 5,
       minDelta: 0.0001,
       stoppedEarly: false,
-      maxEpochs: 30
+      maxEpochs: 30,
+      windowLength: 599,
+      batchSize: 1000
     }
   },
   computed: {
@@ -431,15 +444,10 @@ export default {
       return 'status-idle'
     },
     suggestedModelName() {
-      if (this.selectedTags.length === 0) {
-        return 'All Tags Model'
-      } else if (this.selectedTags.length === 1) {
-        return `${this.selectedTags[0]} Model`
-      } else if (this.selectedTags.length <= 3) {
-        return `${this.selectedTags.join(' + ')} Model`
-      } else {
-        return `${this.selectedTags.length} Tags Model`
+      if (this.selectedAppliance) {
+        return `Seq2Point ${this.selectedAppliance.charAt(0).toUpperCase() + this.selectedAppliance.slice(1)}`
       }
+      return 'Seq2Point Model'
     }
   },
   mounted() {
@@ -569,11 +577,11 @@ export default {
       }
     },
 
-    getAccuracyClass(accuracy) {
-      if (!accuracy) return 'accuracy-low'
-      if (accuracy >= 0.95) return 'accuracy-high'
-      if (accuracy >= 0.85) return 'accuracy-medium'
-      return 'accuracy-low'
+    getMaeClass(mae) {
+      if (!mae) return 'accuracy-low'
+      if (mae <= 30) return 'accuracy-high'  // Good: low error
+      if (mae <= 60) return 'accuracy-medium'  // Medium: acceptable error
+      return 'accuracy-low'  // High: poor predictions
     },
 
     startEditName(modelId, currentName) {
@@ -645,6 +653,11 @@ export default {
     },
 
     async startTraining() {
+      if (!this.selectedAppliance) {
+        this.error = 'Please select an appliance to train'
+        return
+      }
+      
       this.error = null
       this.trainingInProgress = true
       this.trainingHistory = []
@@ -654,12 +667,10 @@ export default {
 
       try {
         const requestBody = {
-          name: this.newModelName || this.suggestedModelName
-        }
-        
-        // Only include selectedTags if any are selected
-        if (this.selectedTags.length > 0) {
-          requestBody.selectedTags = this.selectedTags
+          name: this.newModelName || this.suggestedModelName,
+          appliance: this.selectedAppliance,
+          windowLength: this.windowLength,
+          batchSize: this.batchSize
         }
         
         // Include date range if specified
@@ -739,9 +750,9 @@ export default {
                 this.currentEpoch = data.epoch
                 this.currentMetrics = {
                   loss: data.loss,
-                  accuracy: data.accuracy,
+                  mae: data.mae || data.meanAbsoluteError || 0,
                   valLoss: data.valLoss,
-                  valAccuracy: data.valAccuracy
+                  valMae: data.valMae || data.val_meanAbsoluteError || 0
                 }
                 this.trainingHistory.push(data)
                 
@@ -826,16 +837,16 @@ export default {
         const epochs = [...this.trainingHistory.map(h => h.epoch)]
         const losses = [...this.trainingHistory.map(h => h.loss)]
         const valLosses = [...this.trainingHistory.map(h => h.valLoss)]
-        const accuracies = [...this.trainingHistory.map(h => h.accuracy)]
-        const valAccuracies = [...this.trainingHistory.map(h => h.valAccuracy)]
+        const maes = [...this.trainingHistory.map(h => h.mae || h.meanAbsoluteError || 0)]
+        const valMaes = [...this.trainingHistory.map(h => h.valMae || h.val_meanAbsoluteError || 0)]
 
 
         // Update chart data with plain arrays
         this.chart.data.labels = epochs
         this.chart.data.datasets[0].data = losses
         this.chart.data.datasets[1].data = valLosses
-        this.chart.data.datasets[2].data = accuracies
-        this.chart.data.datasets[3].data = valAccuracies
+        this.chart.data.datasets[2].data = maes
+        this.chart.data.datasets[3].data = valMaes
         
         console.log('  - Chart data updated, calling chart.update()')
         // Update chart without animation for performance
@@ -865,8 +876,8 @@ export default {
       const epochs = [...this.trainingHistory.map(h => h.epoch)]
       const losses = [...this.trainingHistory.map(h => h.loss)]
       const valLosses = [...this.trainingHistory.map(h => h.valLoss)]
-      const accuracies = [...this.trainingHistory.map(h => h.accuracy)]
-      const valAccuracies = [...this.trainingHistory.map(h => h.valAccuracy)]
+      const maes = [...this.trainingHistory.map(h => h.mae || h.meanAbsoluteError || 0)]
+      const valMaes = [...this.trainingHistory.map(h => h.valMae || h.val_meanAbsoluteError || 0)]
 
       const ctx = this.$refs.chartCanvas.getContext('2d')
       // Use markRaw to prevent Chart.js instance from being reactive
@@ -876,7 +887,7 @@ export default {
             labels: epochs,
             datasets: [
               {
-                label: 'Training Loss',
+                label: 'Training MSE',
                 data: losses,
                 borderColor: 'rgb(255, 99, 132)',
                 backgroundColor: 'rgba(255, 99, 132, 0.1)',
@@ -884,7 +895,7 @@ export default {
                 tension: 0.3
               },
               {
-                label: 'Validation Loss',
+                label: 'Validation MSE',
                 data: valLosses,
                 borderColor: 'rgb(255, 159, 64)',
                 backgroundColor: 'rgba(255, 159, 64, 0.1)',
@@ -892,16 +903,16 @@ export default {
                 tension: 0.3
               },
               {
-                label: 'Training Accuracy',
-                data: accuracies,
+                label: 'Training MAE (W)',
+                data: maes,
                 borderColor: 'rgb(75, 192, 192)',
                 backgroundColor: 'rgba(75, 192, 192, 0.1)',
                 yAxisID: 'y1',
                 tension: 0.3
               },
               {
-                label: 'Validation Accuracy',
-                data: valAccuracies,
+                label: 'Validation MAE (W)',
+                data: valMaes,
                 borderColor: 'rgb(54, 162, 235)',
                 backgroundColor: 'rgba(54, 162, 235, 0.1)',
                 yAxisID: 'y1',
@@ -939,7 +950,7 @@ export default {
                 position: 'left',
                 title: {
                   display: true,
-                  text: 'Loss'
+                  text: 'Mean Squared Error (MSE)'
                 }
               },
               y1: {
@@ -948,7 +959,7 @@ export default {
                 position: 'right',
                 title: {
                   display: true,
-                  text: 'Accuracy'
+                  text: 'Mean Absolute Error (W)'
                 },
                 grid: {
                   drawOnChartArea: false
@@ -968,22 +979,14 @@ export default {
         }
         const data = await response.json()
         this.availableTags = data.tags || []
-        console.log(`Loaded ${this.availableTags.length} available tags`)
+        console.log(`Loaded ${this.availableTags.length} available appliances`)
       } catch (err) {
-        console.error('Failed to load available tags:', err)
-        this.error = 'Failed to load available tags: ' + err.message
+        console.error('Failed to load available appliances:', err)
+        this.error = 'Failed to load available appliances: ' + err.message
         this.availableTags = []
       } finally {
         this.loadingTags = false
       }
-    },
-
-    selectAllTags() {
-      this.selectedTags = [...this.availableTags]
-    },
-
-    clearAllTags() {
-      this.selectedTags = []
     },
 
     useSuggestedName() {
@@ -1691,14 +1694,15 @@ export default {
   font-style: italic;
 }
 
-.tags-selection-grid {
+/* Appliance Selection Styles */
+.appliance-selection {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 10px;
   margin-bottom: 15px;
 }
 
-.tag-checkbox-label {
+.appliance-radio-label {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1711,65 +1715,28 @@ export default {
   user-select: none;
 }
 
-.tag-checkbox-label:hover {
+.appliance-radio-label:hover {
   border-color: #42b983;
   background: #f0fdf7;
 }
 
-.tag-checkbox-label.tag-selected {
+.appliance-radio-label.appliance-selected {
   border-color: #42b983;
   background: #e8f5e9;
 }
 
-.tag-checkbox-label input[type="checkbox"] {
+.appliance-radio-label input[type="radio"] {
   cursor: pointer;
   width: 18px;
   height: 18px;
   accent-color: #42b983;
 }
 
-.tag-checkbox-label .tag-name {
+.appliance-radio-label .appliance-name {
   font-size: 14px;
   font-weight: 500;
   color: #333;
   flex: 1;
-}
-
-.tag-selection-actions {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding-top: 10px;
-  border-top: 1px solid #e0e0e0;
-}
-
-.btn-tag-action {
-  padding: 8px 16px;
-  background: white;
-  border: 1px solid #42b983;
-  color: #42b983;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  transition: all 0.2s;
-}
-
-.btn-tag-action:hover:not(:disabled) {
-  background: #42b983;
-  color: white;
-}
-
-.btn-tag-action:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.selected-count {
-  margin-left: auto;
-  color: #42b983;
-  font-weight: 600;
-  font-size: 14px;
 }
 
 .btn-use-suggestion {

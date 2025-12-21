@@ -463,148 +463,319 @@ app.post('/api/ml/train', async (req, res) => {
     trainingInProgress = true
     trainingHistory = []
     
-    // Get model name, selected tags, date range, and early stopping config from request body
-    const { name, selectedTags, startDate, endDate, earlyStoppingEnabled, patience, minDelta, maxEpochs } = req.body
+    // Get model name, appliance (for seq2point), selected tags, date range, and early stopping config from request body
+    const { name, appliance, windowLength, batchSize: reqBatchSize, selectedTags, startDate, endDate, earlyStoppingEnabled, patience, minDelta, maxEpochs } = req.body
     const modelName = name || ''
-    const tagsToTrain = selectedTags && selectedTags.length > 0 ? selectedTags : null
-
-    console.log('🧠 Starting ML model training...')
-    if (modelName) {
+    
+    // Check if this is seq2point training (appliance specified) or tag classification
+    const isSeq2Point = !!appliance
+    
+    if (isSeq2Point) {
+      // SEQ2POINT TRAINING PATH
+      console.log('🧠 Starting seq2point model training...')
       console.log(`   Model name: ${modelName}`)
-    }
-    if (tagsToTrain) {
-      console.log(`   Selected tags (${tagsToTrain.length}): ${tagsToTrain.join(', ')}`)
-    } else {
-      console.log(`   Training on all available tags`)
-    }
-    if (startDate || endDate) {
-      console.log(`   Date range: ${startDate || 'any'} to ${endDate || 'any'}`)
-    }
-    if (earlyStoppingEnabled) {
-      console.log(`   Early stopping: enabled (patience=${patience || 5}, minDelta=${minDelta || 0.0001})`)
-    }
+      console.log(`   Appliance: ${appliance}`)
+      console.log(`   Window length: ${windowLength || 599}`)
+      console.log(`   Batch size: ${reqBatchSize || 1000}`)
+      if (startDate || endDate) {
+        console.log(`   Date range: ${startDate || 'any'} to ${endDate || 'any'}`)
+      }
+      if (earlyStoppingEnabled) {
+        console.log(`   Early stopping: enabled (patience=${patience || 5}, minDelta=${minDelta || 0.0001})`)
+      }
 
-    // Load all data from data folder with optional date filtering
-    const dataDir = path.join(__dirname, '..', 'data')
-    const datasets = loadAllData(dataDir, startDate, endDate)
-
-    if (datasets.length === 0) {
-      throw new Error('No training data found in data folder')
-    }
-
-    // Prepare training data with 5-minute step to reduce data leakage
-    const { xData, yData, uniqueTags, stats } = prepareTrainingData(
-      datasets,
-      5,  // numWindows (5 x 10min = 50min lookback)
-      10, // windowSizeMinutes
-      60, // pointsPerWindow
-      1,  // stepSizeMinutes (1-minute step to reduce overfitting)
-      tagsToTrain // selectedTags filter
-    )
-    mlTags = uniqueTags
-    mlStats = stats
-
-    // Create tensors
-    const { xTrain, yTrain, xVal, yVal } = createTensors(xData, yData, 0.8)
-
-    // Build model with multi-label classification
-    mlModel = new PowerTagPredictor()
-    mlModel.setTags(uniqueTags)
-    mlModel.buildModel(300, 1, uniqueTags.length) // 300 = 5 windows * 60 points per window
-
-    // Set up SSE for streaming training progress
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive'
-    })
-
-    // Training callback
-    const onEpochEnd = async (epoch, logs, stoppedEarly) => {
-      const acc = logs.binaryAccuracy || logs.acc || 0
-      const valAcc = logs.val_binaryAccuracy || logs.val_acc || 0
+      // Import seq2point preprocessing
+      const { prepareSeq2PointDataset } = await import('./ml/seq2pointPreprocessing.js')
       
-      const progress = {
-        epoch: epoch + 1,
-        loss: logs.loss,
-        accuracy: acc,
-        valLoss: logs.val_loss,
-        valAccuracy: valAcc,
-        stoppedEarly: stoppedEarly || false
+      // Load and prepare data
+      const dataDir = path.join(__dirname, '..', 'data')
+      const dataset = await prepareSeq2PointDataset(
+        dataDir,
+        appliance,
+        {
+          windowLength: windowLength || 599,
+          startDate: startDate,
+          endDate: endDate
+        }
+      )
+
+      if (!dataset || dataset.xTrain.shape[0] === 0) {
+        throw new Error(`No training data found for appliance: ${appliance}`)
       }
-      trainingHistory.push(progress)
 
-      // Send progress via SSE
-      res.write(`data: ${JSON.stringify(progress)}\n\n`)
-    }
+      console.log(`📊 Dataset prepared:`)
+      console.log(`   Training samples: ${dataset.xTrain.shape[0]}`)
+      console.log(`   Validation samples: ${dataset.xVal.shape[0]}`)
+      console.log(`   Mains stats: mean=${dataset.mainsStats.mean.toFixed(2)}, std=${dataset.mainsStats.std.toFixed(2)}`)
+      console.log(`   Appliance stats: mean=${dataset.applianceStats.mean.toFixed(2)}, std=${dataset.applianceStats.std.toFixed(2)}`)
 
-    // Train the model (more epochs for multi-label classification)
-    const epochs = parseInt(maxEpochs) || 30
-    const batchSize = 512 
-    
-    // Configure early stopping
-    const earlyStoppingConfig = earlyStoppingEnabled ? {
-      patience: parseInt(patience) || 5,
-      minDelta: parseFloat(minDelta) || 0.0001
-    } : null
+      // Build seq2point model
+      mlModel = new PowerTagPredictor()
+      mlModel.buildModel(windowLength || 599, 1) // seq2point: single output for regression
 
-    // Prepare model directory for auto-save
-    const modelId = Date.now().toString()
-    const modelsBaseDir = path.join(__dirname, 'ml', 'models')
-    const modelDir = path.join(modelsBaseDir, modelId)
-    
-    if (!fs.existsSync(modelDir)) {
-      fs.mkdirSync(modelDir, { recursive: true })
-    }
+      // Set up SSE for streaming training progress
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      })
 
-    // Train with auto-save enabled
-    await mlModel.train(xTrain, yTrain, xVal, yVal, epochs, batchSize, onEpochEnd, earlyStoppingConfig, modelDir)
+      // Training callback for seq2point
+      const onEpochEnd = async (epoch, logs, stoppedEarly) => {
+        const mae = logs.meanAbsoluteError || logs.mae || 0
+        const valMae = logs.val_meanAbsoluteError || logs.val_mae || 0
+        
+        const progress = {
+          epoch: epoch + 1,
+          loss: logs.loss,
+          mae: mae,
+          valLoss: logs.val_loss,
+          valMae: valMae,
+          stoppedEarly: stoppedEarly || false
+        }
+        trainingHistory.push(progress)
 
-    // Calculate final metrics
-    const finalMetrics = trainingHistory[trainingHistory.length - 1]
-
-    // Save metadata
-    const metadata = {
-      id: modelId,
-      name: modelName,
-      uniqueTags: mlTags,
-      stats: mlStats,
-      trainedAt: new Date().toISOString(),
-      trainingHistory: trainingHistory,
-      datasetInfo: {
-        numberOfDays: datasets.length,
-        dates: datasets.map(d => d.date),
-        totalSamples: xData.length
-      },
-      finalMetrics: {
-        loss: finalMetrics.loss,
-        accuracy: finalMetrics.accuracy,
-        valLoss: finalMetrics.valLoss,
-        valAccuracy: finalMetrics.valAccuracy
+        // Send progress via SSE
+        res.write(`data: ${JSON.stringify(progress)}\n\n`)
       }
+
+      // Train the model
+      const epochs = parseInt(maxEpochs) || 30
+      const batchSize = parseInt(reqBatchSize) || 1000
+      
+      // Configure early stopping
+      const earlyStoppingConfig = earlyStoppingEnabled ? {
+        patience: parseInt(patience) || 5,
+        minDelta: parseFloat(minDelta) || 0.0001
+      } : null
+
+      // Prepare model directory for auto-save (seq2point models go to saved_models)
+      const modelId = `seq2point_${appliance}_model`
+      const modelsBaseDir = path.join(__dirname, 'ml', 'saved_models')
+      const modelDir = path.join(modelsBaseDir, modelId)
+      
+      if (!fs.existsSync(modelDir)) {
+        fs.mkdirSync(modelDir, { recursive: true })
+      }
+
+      // Train with auto-save enabled
+      await mlModel.train(
+        dataset.xTrain,
+        dataset.yTrain,
+        dataset.xVal,
+        dataset.yVal,
+        epochs,
+        batchSize,
+        onEpochEnd,
+        earlyStoppingConfig,
+        modelDir
+      )
+
+      // Calculate final metrics
+      const finalMetrics = trainingHistory[trainingHistory.length - 1]
+
+      // Save metadata
+      const metadata = {
+        id: modelId,
+        name: modelName,
+        appliance: appliance,
+        windowLength: windowLength || 599,
+        mainsStats: dataset.mainsStats,
+        applianceStats: dataset.applianceStats,
+        createdAt: new Date().toISOString(),
+        trainedAt: new Date().toISOString(),
+        trainingHistory: trainingHistory,
+        datasetInfo: {
+          numberOfDays: dataset.numberOfDays,
+          totalSamples: dataset.xTrain.shape[0] + dataset.xVal.shape[0],
+          trainSamples: dataset.xTrain.shape[0],
+          valSamples: dataset.xVal.shape[0]
+        },
+        finalMetrics: {
+          loss: finalMetrics.loss,
+          mae: finalMetrics.mae,
+          valLoss: finalMetrics.valLoss,
+          valMae: finalMetrics.valMae
+        },
+        modelType: 'seq2point',
+        trainSamples: dataset.xTrain.shape[0],
+        valSamples: dataset.xVal.shape[0],
+        valMAE: finalMetrics.valMae
+      }
+      
+      fs.writeFileSync(
+        path.join(modelDir, 'metadata.json'),
+        JSON.stringify(metadata, null, 2)
+      )
+
+      // Set as current model
+      currentModelId = modelId
+      trainingMetadata = metadata
+
+      // Clean up tensors (check if they exist and have dispose method)
+      if (dataset.xTrain && typeof dataset.xTrain.dispose === 'function') {
+        dataset.xTrain.dispose()
+      }
+      if (dataset.yTrain && typeof dataset.yTrain.dispose === 'function') {
+        dataset.yTrain.dispose()
+      }
+      if (dataset.xVal && typeof dataset.xVal.dispose === 'function') {
+        dataset.xVal.dispose()
+      }
+      if (dataset.yVal && typeof dataset.yVal.dispose === 'function') {
+        dataset.yVal.dispose()
+      }
+
+      // Send completion message
+      res.write(`data: ${JSON.stringify({ done: true, message: 'Training completed successfully' })}\n\n`)
+      res.end()
+
+      trainingInProgress = false
+      console.log('✅ Seq2point model training completed')
+
+    } else {
+      // TAG CLASSIFICATION TRAINING PATH (ORIGINAL)
+      const tagsToTrain = selectedTags && selectedTags.length > 0 ? selectedTags : null
+
+      console.log('🧠 Starting ML model training...')
+      if (modelName) {
+        console.log(`   Model name: ${modelName}`)
+      }
+      if (tagsToTrain) {
+        console.log(`   Selected tags (${tagsToTrain.length}): ${tagsToTrain.join(', ')}`)
+      } else {
+        console.log(`   Training on all available tags`)
+      }
+      if (startDate || endDate) {
+        console.log(`   Date range: ${startDate || 'any'} to ${endDate || 'any'}`)
+      }
+      if (earlyStoppingEnabled) {
+        console.log(`   Early stopping: enabled (patience=${patience || 5}, minDelta=${minDelta || 0.0001})`)
+      }
+
+      // Load all data from data folder with optional date filtering
+      const dataDir = path.join(__dirname, '..', 'data')
+      const datasets = loadAllData(dataDir, startDate, endDate)
+
+      if (datasets.length === 0) {
+        throw new Error('No training data found in data folder')
+      }
+
+      // Prepare training data with 5-minute step to reduce data leakage
+      const { xData, yData, uniqueTags, stats } = prepareTrainingData(
+        datasets,
+        5,  // numWindows (5 x 10min = 50min lookback)
+        10, // windowSizeMinutes
+        60, // pointsPerWindow
+        1,  // stepSizeMinutes (1-minute step to reduce overfitting)
+        tagsToTrain // selectedTags filter
+      )
+      mlTags = uniqueTags
+      mlStats = stats
+
+      // Create tensors
+      const { xTrain, yTrain, xVal, yVal } = createTensors(xData, yData, 0.8)
+
+      // Build model with multi-label classification
+      mlModel = new PowerTagPredictor()
+      mlModel.setTags(uniqueTags)
+      mlModel.buildModel(300, 1, uniqueTags.length) // 300 = 5 windows * 60 points per window
+
+      // Set up SSE for streaming training progress
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      })
+
+      // Training callback
+      const onEpochEnd = async (epoch, logs, stoppedEarly) => {
+        const acc = logs.binaryAccuracy || logs.acc || 0
+        const valAcc = logs.val_binaryAccuracy || logs.val_acc || 0
+        
+        const progress = {
+          epoch: epoch + 1,
+          loss: logs.loss,
+          accuracy: acc,
+          valLoss: logs.val_loss,
+          valAccuracy: valAcc,
+          stoppedEarly: stoppedEarly || false
+        }
+        trainingHistory.push(progress)
+
+        // Send progress via SSE
+        res.write(`data: ${JSON.stringify(progress)}\n\n`)
+      }
+
+      // Train the model (more epochs for multi-label classification)
+      const epochs = parseInt(maxEpochs) || 30
+      const batchSize = 512 
+      
+      // Configure early stopping
+      const earlyStoppingConfig = earlyStoppingEnabled ? {
+        patience: parseInt(patience) || 5,
+        minDelta: parseFloat(minDelta) || 0.0001
+      } : null
+
+      // Prepare model directory for auto-save
+      const modelId = Date.now().toString()
+      const modelsBaseDir = path.join(__dirname, 'ml', 'models')
+      const modelDir = path.join(modelsBaseDir, modelId)
+      
+      if (!fs.existsSync(modelDir)) {
+        fs.mkdirSync(modelDir, { recursive: true })
+      }
+
+      // Train with auto-save enabled
+      await mlModel.train(xTrain, yTrain, xVal, yVal, epochs, batchSize, onEpochEnd, earlyStoppingConfig, modelDir)
+
+      // Calculate final metrics
+      const finalMetrics = trainingHistory[trainingHistory.length - 1]
+
+      // Save metadata
+      const metadata = {
+        id: modelId,
+        name: modelName,
+        uniqueTags: mlTags,
+        stats: mlStats,
+        trainedAt: new Date().toISOString(),
+        trainingHistory: trainingHistory,
+        datasetInfo: {
+          numberOfDays: datasets.length,
+          dates: datasets.map(d => d.date),
+          totalSamples: xData.length
+        },
+        finalMetrics: {
+          loss: finalMetrics.loss,
+          accuracy: finalMetrics.accuracy,
+          valLoss: finalMetrics.valLoss,
+          valAccuracy: finalMetrics.valAccuracy
+        },
+        modelType: 'classification'
+      }
+      
+      fs.writeFileSync(
+        path.join(modelDir, 'metadata.json'),
+        JSON.stringify(metadata, null, 2)
+      )
+
+      // Set as current model
+      currentModelId = modelId
+      trainingMetadata = metadata
+
+      // Clean up tensors
+      xTrain.dispose()
+      yTrain.dispose()
+      xVal.dispose()
+      yVal.dispose()
+
+      // Send completion message
+      res.write(`data: ${JSON.stringify({ done: true, message: 'Training completed successfully' })}\n\n`)
+      res.end()
+
+      trainingInProgress = false
+      console.log('✅ ML model training completed')
     }
-    
-    fs.writeFileSync(
-      path.join(modelDir, 'metadata.json'),
-      JSON.stringify(metadata, null, 2)
-    )
-
-    // Set as current model
-    currentModelId = modelId
-    trainingMetadata = metadata
-
-    // Clean up tensors
-    xTrain.dispose()
-    yTrain.dispose()
-    xVal.dispose()
-    yVal.dispose()
-
-    // Send completion message
-    res.write(`data: ${JSON.stringify({ done: true, message: 'Training completed successfully' })}\n\n`)
-    res.end()
-
-    trainingInProgress = false
-    console.log('✅ ML model training completed')
 
   } catch (error) {
     console.error('ML Training error:', error)
@@ -646,34 +817,78 @@ app.get('/api/ml/history', (req, res) => {
 // List all saved models
 app.get('/api/ml/models', (req, res) => {
   try {
-    const modelsDir = path.join(__dirname, 'ml', 'models')
+    const models = []
     
-    if (!fs.existsSync(modelsDir)) {
-      return res.json({ models: [] })
+    // Check both 'models' (UI-trained) and 'saved_models' (CLI-trained seq2point) directories
+    const modelsBaseDir = path.join(__dirname, 'ml', 'models')
+    const savedModelsDir = path.join(__dirname, 'ml', 'saved_models')
+    
+    // Scan UI-trained models (classification and seq2point from UI)
+    if (fs.existsSync(modelsBaseDir)) {
+      const modelDirs = fs.readdirSync(modelsBaseDir).filter(item => {
+        const itemPath = path.join(modelsBaseDir, item)
+        return fs.statSync(itemPath).isDirectory()
+      })
+
+      for (const modelId of modelDirs) {
+        const metadataPath = path.join(modelsBaseDir, modelId, 'metadata.json')
+        if (fs.existsSync(metadataPath)) {
+          try {
+            const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+            models.push({
+              id: modelId,
+              name: metadata.name || '',
+              appliance: metadata.appliance,
+              trainedAt: metadata.trainedAt,
+              uniqueTags: metadata.uniqueTags,
+              datasetInfo: metadata.datasetInfo,
+              finalMetrics: metadata.finalMetrics,
+              modelType: metadata.modelType || 'classification',
+              isActive: modelId === currentModelId
+            })
+          } catch (err) {
+            console.warn(`Failed to load metadata for model ${modelId}:`, err.message)
+          }
+        }
+      }
     }
 
-    const modelDirs = fs.readdirSync(modelsDir).filter(item => {
-      const itemPath = path.join(modelsDir, item)
-      return fs.statSync(itemPath).isDirectory()
-    })
+    // Scan CLI-trained seq2point models
+    if (fs.existsSync(savedModelsDir)) {
+      const modelDirs = fs.readdirSync(savedModelsDir).filter(item => {
+        const itemPath = path.join(savedModelsDir, item)
+        return fs.statSync(itemPath).isDirectory() && item.startsWith('seq2point_')
+      })
 
-    const models = []
-    for (const modelId of modelDirs) {
-      const metadataPath = path.join(modelsDir, modelId, 'metadata.json')
-      if (fs.existsSync(metadataPath)) {
-        try {
-          const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
-          models.push({
-            id: modelId,
-            name: metadata.name || '',
-            trainedAt: metadata.trainedAt,
-            uniqueTags: metadata.uniqueTags,
-            datasetInfo: metadata.datasetInfo,
-            finalMetrics: metadata.finalMetrics,
-            isActive: modelId === currentModelId
-          })
-        } catch (err) {
-          console.warn(`Failed to load metadata for model ${modelId}:`, err.message)
+      for (const modelDir of modelDirs) {
+        const metadataPath = path.join(savedModelsDir, modelDir, 'metadata.json')
+        if (fs.existsSync(metadataPath)) {
+          try {
+            const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+            const appliance = metadata.appliance || modelDir.replace('seq2point_', '').replace('_model', '')
+            
+            models.push({
+              id: modelDir,
+              name: appliance.charAt(0).toUpperCase() + appliance.slice(1), // Use appliance name as model name
+              appliance: appliance,
+              trainedAt: metadata.createdAt || metadata.trainedAt, // Use createdAt for CLI models
+              datasetInfo: {
+                numberOfDays: metadata.samplesPerDay?.length || 0,
+                totalSamples: metadata.trainSamples + metadata.valSamples,
+                trainSamples: metadata.trainSamples,
+                valSamples: metadata.valSamples
+              },
+              finalMetrics: {
+                valMae: metadata.valMAE || metadata.val_mae
+              },
+              modelType: 'seq2point',
+              windowLength: metadata.windowLength,
+              isActive: false, // CLI models are not loaded by default
+              source: 'cli' // Mark as CLI-trained
+            })
+          } catch (err) {
+            console.warn(`Failed to load metadata for model ${modelDir}:`, err.message)
+          }
         }
       }
     }
@@ -697,9 +912,21 @@ app.post('/api/ml/models/load', async (req, res) => {
       return res.status(400).json({ error: 'modelId is required' })
     }
 
+    // Check both directories
+    let modelPath, metadataPath, isSeq2Point = false
+    
+    // First check UI-trained models
     const modelsDir = path.join(__dirname, 'ml', 'models')
-    const modelPath = path.join(modelsDir, modelId)
-    const metadataPath = path.join(modelPath, 'metadata.json')
+    modelPath = path.join(modelsDir, modelId)
+    metadataPath = path.join(modelPath, 'metadata.json')
+    
+    // If not found, check CLI-trained seq2point models
+    if (!fs.existsSync(modelPath) || !fs.existsSync(metadataPath)) {
+      const savedModelsDir = path.join(__dirname, 'ml', 'saved_models')
+      modelPath = path.join(savedModelsDir, modelId)
+      metadataPath = path.join(modelPath, 'metadata.json')
+      isSeq2Point = true
+    }
 
     if (!fs.existsSync(modelPath) || !fs.existsSync(metadataPath)) {
       return res.status(404).json({ error: 'Model not found' })
@@ -711,16 +938,31 @@ app.post('/api/ml/models/load', async (req, res) => {
     // Load the model
     mlModel = new PowerTagPredictor()
     await mlModel.load(modelPath)
-    mlModel.setTags(metadata.uniqueTags)
+    
+    if (isSeq2Point || metadata.modelType === 'seq2point') {
+      // For seq2point models, set appliance-specific normalization
+      mlModel.applianceMean = metadata.applianceStats?.mean || 0
+      mlModel.applianceStd = metadata.applianceStats?.std || 1
+      mlModel.mainsMean = metadata.mainsStats?.mean || 0
+      mlModel.mainsStd = metadata.mainsStats?.std || 1
+      mlStats = {
+        mainsStats: metadata.mainsStats,
+        applianceStats: metadata.applianceStats
+      }
+      mlTags = [metadata.appliance]
+    } else {
+      // For classification models
+      mlModel.setTags(metadata.uniqueTags)
+      mlTags = metadata.uniqueTags
+      mlStats = metadata.stats
+    }
 
     // Update state
-    mlTags = metadata.uniqueTags
-    mlStats = metadata.stats
     trainingHistory = metadata.trainingHistory || []
     trainingMetadata = metadata
     currentModelId = modelId
 
-    console.log(`✅ Loaded model ${modelId} from ${metadata.trainedAt}`)
+    console.log(`✅ Loaded model ${modelId} from ${metadata.trainedAt || metadata.createdAt}`)
 
     res.json({ 
       success: true, 
@@ -743,9 +985,19 @@ app.patch('/api/ml/models/:modelId/name', (req, res) => {
       return res.status(400).json({ error: 'modelId is required' })
     }
 
+    // Check both directories
+    let modelPath, metadataPath
+    
     const modelsDir = path.join(__dirname, 'ml', 'models')
-    const modelPath = path.join(modelsDir, modelId)
-    const metadataPath = path.join(modelPath, 'metadata.json')
+    modelPath = path.join(modelsDir, modelId)
+    metadataPath = path.join(modelPath, 'metadata.json')
+    
+    // If not found, check CLI-trained models
+    if (!fs.existsSync(metadataPath)) {
+      const savedModelsDir = path.join(__dirname, 'ml', 'saved_models')
+      modelPath = path.join(savedModelsDir, modelId)
+      metadataPath = path.join(modelPath, 'metadata.json')
+    }
 
     if (!fs.existsSync(metadataPath)) {
       return res.status(404).json({ error: 'Model not found' })
@@ -787,8 +1039,17 @@ app.delete('/api/ml/models/:modelId', (req, res) => {
       return res.status(400).json({ error: 'Cannot delete the currently active model' })
     }
 
+    // Check both directories
+    let modelPath
+    
     const modelsDir = path.join(__dirname, 'ml', 'models')
-    const modelPath = path.join(modelsDir, modelId)
+    modelPath = path.join(modelsDir, modelId)
+    
+    // If not found, check CLI-trained models
+    if (!fs.existsSync(modelPath)) {
+      const savedModelsDir = path.join(__dirname, 'ml', 'saved_models')
+      modelPath = path.join(savedModelsDir, modelId)
+    }
 
     if (!fs.existsSync(modelPath)) {
       return res.status(404).json({ error: 'Model not found' })

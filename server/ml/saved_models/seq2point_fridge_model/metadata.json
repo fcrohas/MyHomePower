@@ -1,0 +1,271 @@
+{
+  "id": "1766323794088",
+  "name": "Fridge",
+  "appliance": "fridge",
+  "windowLength": 599,
+  "mainsStats": {
+    "mean": 568.3954676029365,
+    "std": 766.8682110208789
+  },
+  "applianceStats": {
+    "mean": 85.7556099117303,
+    "std": 200.58096689014664,
+    "onPowerThreshold": 5,
+    "maxOnPower": 3480
+  },
+  "trainedAt": "2025-12-21T14:44:32.323Z",
+  "trainingHistory": [
+    {
+      "epoch": 1,
+      "loss": 1.4573051929473877,
+      "mae": 0,
+      "valLoss": 0.9713528156280518,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 2,
+      "loss": 1.0107313394546509,
+      "mae": 0,
+      "valLoss": 0.576285719871521,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 3,
+      "loss": 0.7993739247322083,
+      "mae": 0,
+      "valLoss": 0.4663928151130676,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 4,
+      "loss": 0.6915562748908997,
+      "mae": 0,
+      "valLoss": 0.4012230932712555,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 5,
+      "loss": 0.6051956415176392,
+      "mae": 0,
+      "valLoss": 0.366432249546051,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 6,
+      "loss": 0.5265290141105652,
+      "mae": 0,
+      "valLoss": 0.29997333884239197,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 7,
+      "loss": 0.4689118266105652,
+      "mae": 0,
+      "valLoss": 0.2651115357875824,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 8,
+      "loss": 0.41456910967826843,
+      "mae": 0,
+      "valLoss": 0.24862267076969147,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 9,
+      "loss": 0.3648158311843872,
+      "mae": 0,
+      "valLoss": 0.23017676174640656,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 10,
+      "loss": 0.3274891674518585,
+      "mae": 0,
+      "valLoss": 0.21789176762104034,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 11,
+      "loss": 0.2915087044239044,
+      "mae": 0,
+      "valLoss": 0.22919003665447235,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 12,
+      "loss": 0.2627631425857544,
+      "mae": 0,
+      "valLoss": 0.1851515769958496,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 13,
+      "loss": 0.2363225370645523,
+      "mae": 0,
+      "valLoss": 0.1833018809556961,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 14,
+      "loss": 0.21294502913951874,
+      "mae": 0,
+      "valLoss": 0.1566307246685028,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 15,
+      "loss": 0.1920602172613144,
+      "mae": 0,
+      "valLoss": 0.14242200553417206,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 16,
+      "loss": 0.173423632979393,
+      "mae": 0,
+      "valLoss": 0.11764192581176758,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 17,
+      "loss": 0.15630356967449188,
+      "mae": 0,
+      "valLoss": 0.29989752173423767,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 18,
+      "loss": 0.1544991433620453,
+      "mae": 0,
+      "valLoss": 0.1336355358362198,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 19,
+      "loss": 0.13018567860126495,
+      "mae": 0,
+      "valLoss": 0.10086844861507416,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 20,
+      "loss": 0.12369068711996078,
+      "mae": 0,
+      "valLoss": 0.09538687020540237,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 21,
+      "loss": 0.11406177282333374,
+      "mae": 0,
+      "valLoss": 0.09287268668413162,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 22,
+      "loss": 0.10709239542484283,
+      "mae": 0,
+      "valLoss": 0.0873631164431572,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 23,
+      "loss": 0.09787970781326294,
+      "mae": 0,
+      "valLoss": 0.08054451644420624,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 24,
+      "loss": 0.09294113516807556,
+      "mae": 0,
+      "valLoss": 0.10906980186700821,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 25,
+      "loss": 0.08771150559186935,
+      "mae": 0,
+      "valLoss": 0.07241685688495636,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 26,
+      "loss": 0.08394297957420349,
+      "mae": 0,
+      "valLoss": 0.07261205464601517,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 27,
+      "loss": 0.07575766742229462,
+      "mae": 0,
+      "valLoss": 0.06257462501525879,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 28,
+      "loss": 0.07315422594547272,
+      "mae": 0,
+      "valLoss": 0.06216483935713768,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 29,
+      "loss": 0.07026228308677673,
+      "mae": 0,
+      "valLoss": 0.09774994105100632,
+      "valMae": 0,
+      "stoppedEarly": false
+    },
+    {
+      "epoch": 30,
+      "loss": 0.06682765483856201,
+      "mae": 0,
+      "valLoss": 0.0690319836139679,
+      "valMae": 0,
+      "stoppedEarly": false
+    }
+  ],
+  "datasetInfo": {
+    "totalSamples": 88014,
+    "trainSamples": 83613,
+    "valSamples": 4401
+  },
+  "finalMetrics": {
+    "loss": 0.06682765483856201,
+    "mae": 0,
+    "valLoss": 0.0690319836139679,
+    "valMae": 0
+  },
+  "modelType": "seq2point"
+}
