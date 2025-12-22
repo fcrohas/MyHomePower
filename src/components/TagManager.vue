@@ -86,6 +86,49 @@
         </div>
       </div>
     </div>
+
+    <!-- Model Subtraction Section -->
+    <div class="model-subtraction" v-if="availableModels.length > 0 || subtractedModels.length > 0">
+      <h3>Subtract Trained Models</h3>
+      <p class="model-hint">Subtract predictions from seq2point trained models (like virtual sensors)</p>
+      
+      <div v-if="loadingModels" class="loading-hint">Loading models...</div>
+      <div v-else-if="availableModels.length === 0 && subtractedModels.length === 0" class="model-hint">
+        No trained models found. Train models using: <code>node server/ml/seq2point-train.js "appliance_name"</code>
+      </div>
+      <div v-else class="form-group">
+        <label>Add model to subtract:</label>
+        <select v-model="selectedModelToAdd" @change="addModelToSubtract">
+          <option value="">-- Select a model --</option>
+          <option 
+            v-for="model in availableModels" 
+            :key="model"
+            :value="model"
+            :disabled="subtractedModels.some(m => m === model)"
+          >
+            {{ model }}
+          </option>
+        </select>
+      </div>
+      
+      <div v-if="subtractedModels.length > 0" class="subtracted-models-list">
+        <h4>Active Model Subtractions ({{ subtractedModels.length }})</h4>
+        <div 
+          v-for="model in subtractedModels" 
+          :key="model"
+          class="model-item"
+        >
+          <span class="model-name">{{ model }}</span>
+          <button 
+            @click="removeModelSubtraction(model)"
+            class="btn-remove"
+            title="Remove subtraction"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+    </div>
     
     <div class="sticky-header">
       <div class="header-row">
@@ -225,7 +268,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { format } from 'date-fns'
 import { getEntities, fetchHistory } from '../services/homeassistant'
 
@@ -248,7 +291,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['add-tag', 'delete-tag', 'clear-selection', 'sensors-changed'])
+const emit = defineEmits(['add-tag', 'delete-tag', 'clear-selection', 'sensors-changed', 'models-changed'])
 
 // Toast notifications
 const toast = ref({
@@ -276,6 +319,12 @@ const selectedSensors = ref(new Set())
 const availableSensors = ref([])
 const subtractedSensors = ref([])
 const selectedSensorToAdd = ref('')
+
+// Model subtraction state
+const availableModels = ref([])
+const subtractedModels = ref([])
+const selectedModelToAdd = ref('')
+const loadingModels = ref(false)
 
 // Delete confirmation
 const tagToDelete = ref(null)
@@ -608,6 +657,91 @@ watch(() => props.currentDate, () => {
   if (subtractedSensors.value.length > 0) {
     emit('sensors-changed', subtractedSensors.value.map(s => s.entity_id))
   }
+  if (subtractedModels.value.length > 0) {
+    emit('models-changed', subtractedModels.value)
+  }
+})
+
+// Load available seq2point models
+const loadAvailableModels = async () => {
+  loadingModels.value = true
+  try {
+    const response = await fetch('http://localhost:3001/api/seq2point/models')
+    if (response.ok) {
+      const data = await response.json()
+      availableModels.value = (data.models || []).map(m => m.appliance)
+      console.log('Loaded available models:', availableModels.value)
+    } else {
+      console.warn('Failed to load models - server may not be running')
+      availableModels.value = []
+    }
+  } catch (err) {
+    // Server not running or connection error - this is expected in some cases
+    console.warn('Model server not available:', err.message)
+    availableModels.value = []
+  } finally {
+    loadingModels.value = false
+  }
+}
+
+// Add model to subtract list
+const addModelToSubtract = () => {
+  console.log('🔵 addModelToSubtract called')
+  console.log('selectedModelToAdd.value:', selectedModelToAdd.value)
+  
+  if (!selectedModelToAdd.value) {
+    console.log('❌ No model selected')
+    return
+  }
+  
+  // Check if already added
+  if (subtractedModels.value.includes(selectedModelToAdd.value)) {
+    console.log('⚠️ Model already in list')
+    selectedModelToAdd.value = ''
+    return
+  }
+  
+  // Add to subtracted list
+  subtractedModels.value.push(selectedModelToAdd.value)
+  console.log('📝 Subtracted models list:', subtractedModels.value)
+  
+  // Save to localStorage
+  localStorage.setItem('subtractedModels', JSON.stringify(subtractedModels.value))
+  
+  // Emit event to trigger model prediction and subtraction
+  emit('models-changed', subtractedModels.value)
+  
+  selectedModelToAdd.value = ''
+}
+
+// Remove model subtraction
+const removeModelSubtraction = (modelName) => {
+  subtractedModels.value = subtractedModels.value.filter(m => m !== modelName)
+  
+  // Save to localStorage
+  localStorage.setItem('subtractedModels', JSON.stringify(subtractedModels.value))
+  
+  // Emit event to recalculate chart data
+  emit('models-changed', subtractedModels.value)
+}
+
+// Load stored models on mount
+const loadStoredModels = () => {
+  const storedModels = localStorage.getItem('subtractedModels')
+  if (storedModels) {
+    subtractedModels.value = JSON.parse(storedModels)
+    console.log('Loaded subtracted models from storage:', subtractedModels.value)
+    // Emit to parent on load
+    if (subtractedModels.value.length > 0) {
+      emit('models-changed', subtractedModels.value)
+    }
+  }
+}
+
+// Load available models and stored selections on mount
+onMounted(() => {
+  loadAvailableModels()
+  loadStoredModels()
 })
 </script>
 
@@ -935,6 +1069,71 @@ watch(() => props.currentDate, () => {
   border-radius: 8px;
   margin: 0 1rem 1rem 1rem;
   border: 1px solid #b8daff;
+}
+
+.model-subtraction {
+  background: #f0fff4;
+  padding: 1rem;
+  border-radius: 8px;
+  margin: 0 1rem 1rem 1rem;
+  border: 1px solid #a7f3d0;
+}
+
+.model-subtraction h3 {
+  margin: 0 0 0.5rem 0;
+  color: #2c3e50;
+  font-size: 1.1rem;
+}
+
+.model-hint {
+  font-size: 0.85rem;
+  color: #666;
+  margin: 0 0 0.75rem 0;
+  font-style: italic;
+}
+
+.loading-hint {
+  font-size: 0.9rem;
+  color: #888;
+  padding: 0.5rem;
+  text-align: center;
+  font-style: italic;
+}
+
+.model-hint code {
+  background: #f5f5f5;
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.8rem;
+  color: #c7254e;
+  font-family: monospace;
+}
+
+.subtracted-models-list {
+  margin-top: 1rem;
+}
+
+.subtracted-models-list h4 {
+  color: #2c3e50;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+.model-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  background: white;
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+  border: 1px solid #ddd;
+}
+
+.model-name {
+  font-weight: 500;
+  color: #2c3e50;
+  text-transform: capitalize;
 }
 
 .subtracted-sensors-list {

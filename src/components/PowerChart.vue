@@ -19,6 +19,14 @@
         <h3>Auto Label Settings</h3>
         
         <div class="form-group">
+          <label>Model Type:</label>
+          <select v-model="autoLabelSettings.modelType">
+            <option value="classifier">Classification Model</option>
+            <option value="seq2point">Seq2Point Models</option>
+          </select>
+        </div>
+
+        <div v-if="autoLabelSettings.modelType === 'classifier'" class="form-group">
           <label>Model:</label>
           <select v-model="autoLabelSettings.modelId">
             <option value="" disabled>-- Select a model --</option>
@@ -27,8 +35,26 @@
             </option>
           </select>
         </div>
+
+        <div v-if="autoLabelSettings.modelType === 'seq2point'" class="form-group">
+          <label>Seq2Point Models:</label>
+          <div v-if="loadingSeq2PointModels" class="loading-hint">Loading models...</div>
+          <div v-else-if="seq2pointModels.length === 0" class="hint">
+            No trained seq2point models found. Train models first.
+          </div>
+          <div v-else class="model-checkboxes">
+            <label v-for="model in seq2pointModels" :key="model" class="checkbox-label">
+              <input 
+                type="checkbox" 
+                :value="model" 
+                v-model="autoLabelSettings.selectedSeq2PointModels"
+              />
+              <span>{{ model }}</span>
+            </label>
+          </div>
+        </div>
         
-        <div class="form-group">
+        <div v-if="autoLabelSettings.modelType === 'classifier'" class="form-group">
           <label>Confidence Threshold: {{ autoLabelSettings.threshold }}</label>
           <input 
             type="range" 
@@ -40,7 +66,7 @@
           <small>Tags with confidence below this threshold will be filtered out</small>
         </div>
         
-        <div class="form-group">
+        <div v-if="autoLabelSettings.modelType === 'classifier'" class="form-group">
           <label>Sliding Window Size (minutes): {{ autoLabelSettings.stepSize }}</label>
           <input 
             type="range" 
@@ -102,12 +128,16 @@ const emit = defineEmits(['range-selected', 'add-tag', 'update-tag'])
 // Auto Label Feature
 const showAutoLabelSettings = ref(false)
 const autoLabelSettings = ref({
+  modelType: 'seq2point', // 'classifier' or 'seq2point'
   modelId: '',
+  selectedSeq2PointModels: [],
   threshold: 0.3,
   stepSize: 10
 })
 const predictedTags = ref([])
 const availableModels = ref([])
+const seq2pointModels = ref([])
+const loadingSeq2PointModels = ref(false)
 const isAutoLabeling = ref(false)
 const autoLabelError = ref('')
 
@@ -609,6 +639,26 @@ const loadAvailableModels = async () => {
   }
 }
 
+const loadSeq2PointModels = async () => {
+  loadingSeq2PointModels.value = true
+  try {
+    const response = await fetch('http://localhost:3001/api/seq2point/models')
+    if (response.ok) {
+      const data = await response.json()
+      seq2pointModels.value = (data.models || []).map(m => m.appliance)
+      console.log('Loaded available seq2point models:', seq2pointModels.value)
+    } else {
+      console.warn('Failed to load seq2point models')
+      seq2pointModels.value = []
+    }
+  } catch (err) {
+    console.warn('Seq2point server not available:', err.message)
+    seq2pointModels.value = []
+  } finally {
+    loadingSeq2PointModels.value = false
+  }
+}
+
 const runAutoLabel = async () => {
   if (!props.data || props.data.length === 0) {
     autoLabelError.value = 'No power data available'
@@ -619,127 +669,11 @@ const runAutoLabel = async () => {
   autoLabelError.value = ''
   
   try {
-    // Load the selected model first if specified
-    if (autoLabelSettings.value.modelId) {
-      const loadResponse = await fetch('http://localhost:3001/api/ml/models/load', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modelId: autoLabelSettings.value.modelId })
-      })
-      
-      if (!loadResponse.ok) {
-        throw new Error('Failed to load selected model')
-      }
+    if (autoLabelSettings.value.modelType === 'seq2point') {
+      await runSeq2PointAutoLabel()
+    } else {
+      await runClassifierAutoLabel()
     }
-    
-    // Prepare power data
-    const powerData = props.data.map(point => ({
-      timestamp: new Date(point.x).toISOString(),
-      value: point.y
-    }))
-    
-    // Call the sliding window prediction API
-    const response = await fetch('http://localhost:3001/api/ml/predict-day-sliding', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        date: props.currentDate,
-        powerData: powerData,
-        stepSize: autoLabelSettings.value.stepSize,
-        threshold: autoLabelSettings.value.threshold
-      })
-    })
-    
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.error || 'Prediction failed')
-    }
-    
-    const result = await response.json()
-    const predictions = result.predictions || []
-    
-    console.log(`Generated ${predictions.length} predicted tags`)
-    
-    // Add predictions as tags with isPrediction flag
-    // For multi-label predictions, create separate tags for each label
-    // Filter out "Standby" labels and merge contiguous predictions
-    
-    // First, expand multi-label predictions into individual entries
-    const expandedPredictions = []
-    predictions.forEach(prediction => {
-      if (prediction.tags && prediction.tags.length > 1) {
-        // Multi-label: create an entry for each label (excluding Standby)
-        prediction.tags.forEach(tagItem => {
-          if (tagItem.tag.toLowerCase() !== 'standby') {
-            expandedPredictions.push({
-              startTime: prediction.startTime,
-              endTime: prediction.endTime,
-              label: tagItem.tag,
-              confidence: tagItem.probability
-            })
-          }
-        })
-      } else {
-        // Single label (skip if it's Standby)
-        if (prediction.tag.toLowerCase() !== 'standby') {
-          expandedPredictions.push({
-            startTime: prediction.startTime,
-            endTime: prediction.endTime,
-            label: prediction.tag,
-            confidence: prediction.confidence
-          })
-        }
-      }
-    })
-    
-    // Sort by label then by start time
-    expandedPredictions.sort((a, b) => {
-      if (a.label !== b.label) return a.label.localeCompare(b.label)
-      return a.startTime.localeCompare(b.startTime)
-    })
-    
-    // Merge contiguous predictions with the same label
-    const mergedPredictions = []
-    let currentMerge = null
-    
-    expandedPredictions.forEach(pred => {
-      if (!currentMerge || currentMerge.label !== pred.label || currentMerge.endTime !== pred.startTime) {
-        // Start a new merge group
-        if (currentMerge) {
-          mergedPredictions.push(currentMerge)
-        }
-        currentMerge = {
-          startTime: pred.startTime,
-          endTime: pred.endTime,
-          label: pred.label,
-          confidence: pred.confidence,
-          count: 1
-        }
-      } else {
-        // Extend the current merge group
-        currentMerge.endTime = pred.endTime
-        currentMerge.confidence = (currentMerge.confidence * currentMerge.count + pred.confidence) / (currentMerge.count + 1)
-        currentMerge.count++
-      }
-    })
-    
-    // Don't forget the last merge group
-    if (currentMerge) {
-      mergedPredictions.push(currentMerge)
-    }
-    
-    console.log(`After filtering and merging: ${mergedPredictions.length} tags`)
-    
-    // Add merged predictions as tags
-    mergedPredictions.forEach(pred => {
-      emit('add-tag', {
-        startTime: pred.startTime,
-        endTime: pred.endTime,
-        label: pred.label,
-        isPrediction: true,
-        confidence: pred.confidence
-      })
-    })
     
     // Close settings dialog
     showAutoLabelSettings.value = false
@@ -750,6 +684,226 @@ const runAutoLabel = async () => {
   } finally {
     isAutoLabeling.value = false
   }
+}
+
+const runSeq2PointAutoLabel = async () => {
+  if (!autoLabelSettings.value.selectedSeq2PointModels || autoLabelSettings.value.selectedSeq2PointModels.length === 0) {
+    throw new Error('Please select at least one seq2point model')
+  }
+  
+  // Prepare power data
+  const powerData = props.data.map(point => ({
+    timestamp: new Date(point.x).toISOString(),
+    power: point.y
+  }))
+  
+  // Get predictions from each selected model
+  const allPredictions = []
+  
+  for (const modelName of autoLabelSettings.value.selectedSeq2PointModels) {
+    console.log(`Getting predictions from ${modelName}...`)
+    
+    const response = await fetch('http://localhost:3001/api/seq2point/predict-day', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        appliance: modelName,
+        date: props.currentDate,
+        powerData: powerData
+      })
+    })
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: response.statusText }))
+      throw new Error(`Failed to get predictions for ${modelName}: ${errorData.error}`)
+    }
+    
+    const data = await response.json()
+    console.log(`Got ${data.predictions.length} predictions for ${modelName}`)
+    
+    // Group consecutive ON predictions into time ranges
+    let currentRange = null
+    
+    data.predictions.forEach((pred, idx) => {
+      if (pred.isOn) {  // Only use ON status predictions
+        if (!currentRange) {
+          // Start new range
+          currentRange = {
+            startTime: pred.timestamp,
+            endTime: pred.timestamp,
+            label: modelName,
+            totalPower: pred.predictedPower,
+            count: 1,
+            avgOnOffProb: pred.onoffProbability || 1
+          }
+        } else {
+          // Extend current range
+          currentRange.endTime = pred.timestamp
+          currentRange.totalPower += pred.predictedPower
+          currentRange.count++
+          currentRange.avgOnOffProb += (pred.onoffProbability || 1)
+        }
+      } else {
+        // OFF - close current range if exists
+        if (currentRange) {
+          allPredictions.push({
+            startTime: new Date(currentRange.startTime).toTimeString().slice(0, 5),
+            endTime: new Date(currentRange.endTime).toTimeString().slice(0, 5),
+            label: currentRange.label,
+            confidence: currentRange.avgOnOffProb / currentRange.count
+          })
+          currentRange = null
+        }
+      }
+    })
+    
+    // Don't forget the last range
+    if (currentRange) {
+      allPredictions.push({
+        startTime: new Date(currentRange.startTime).toTimeString().slice(0, 5),
+        endTime: new Date(currentRange.endTime).toTimeString().slice(0, 5),
+        label: currentRange.label,
+        confidence: currentRange.avgOnOffProb / currentRange.count
+      })
+    }
+  }
+  
+  console.log(`Generated ${allPredictions.length} predicted tags from seq2point models`)
+  
+  // Add predictions as tags
+  allPredictions.forEach(pred => {
+    emit('add-tag', {
+      startTime: pred.startTime,
+      endTime: pred.endTime,
+      label: pred.label,
+      isPrediction: true,
+      confidence: pred.confidence
+    })
+  })
+}
+
+const runClassifierAutoLabel = async () => {
+  // Load the selected model first if specified
+  if (autoLabelSettings.value.modelId) {
+    const loadResponse = await fetch('http://localhost:3001/api/ml/models/load', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modelId: autoLabelSettings.value.modelId })
+    })
+    
+    if (!loadResponse.ok) {
+      throw new Error('Failed to load selected model')
+    }
+  }
+  
+  // Prepare power data
+  const powerData = props.data.map(point => ({
+    timestamp: new Date(point.x).toISOString(),
+    value: point.y
+  }))
+  
+  // Call the sliding window prediction API
+  const response = await fetch('http://localhost:3001/api/ml/predict-day-sliding', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      date: props.currentDate,
+      powerData: powerData,
+      stepSize: autoLabelSettings.value.stepSize,
+      threshold: autoLabelSettings.value.threshold
+    })
+  })
+  
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.error || 'Prediction failed')
+  }
+  
+  const result = await response.json()
+  const predictions = result.predictions || []
+  
+  console.log(`Generated ${predictions.length} predicted tags`)
+  
+  // Add predictions as tags with isPrediction flag
+  // For multi-label predictions, create separate tags for each label
+  // Filter out "Standby" labels and merge contiguous predictions
+  
+  // First, expand multi-label predictions into individual entries
+  const expandedPredictions = []
+  predictions.forEach(prediction => {
+    if (prediction.tags && prediction.tags.length > 1) {
+      // Multi-label: create an entry for each label (excluding Standby)
+      prediction.tags.forEach(tagItem => {
+        if (tagItem.tag.toLowerCase() !== 'standby') {
+          expandedPredictions.push({
+            startTime: prediction.startTime,
+            endTime: prediction.endTime,
+            label: tagItem.tag,
+            confidence: tagItem.probability
+          })
+        }
+      })
+    } else {
+      // Single label (skip if it's Standby)
+      if (prediction.tag.toLowerCase() !== 'standby') {
+        expandedPredictions.push({
+          startTime: prediction.startTime,
+          endTime: prediction.endTime,
+          label: prediction.tag,
+          confidence: prediction.confidence
+        })
+      }
+    }
+  })
+  
+  // Sort by label then by start time
+  expandedPredictions.sort((a, b) => {
+    if (a.label !== b.label) return a.label.localeCompare(b.label)
+    return a.startTime.localeCompare(b.startTime)
+  })
+  
+  // Merge contiguous predictions with the same label
+  const mergedPredictions = []
+  let currentMerge = null
+  
+  expandedPredictions.forEach(pred => {
+    if (!currentMerge || currentMerge.label !== pred.label || currentMerge.endTime !== pred.startTime) {
+      // Start a new merge group
+      if (currentMerge) {
+        mergedPredictions.push(currentMerge)
+      }
+      currentMerge = {
+        startTime: pred.startTime,
+        endTime: pred.endTime,
+        label: pred.label,
+        confidence: pred.confidence,
+        count: 1
+      }
+    } else {
+      // Extend the current merge group
+      currentMerge.endTime = pred.endTime
+      currentMerge.confidence = (currentMerge.confidence * currentMerge.count + pred.confidence) / (currentMerge.count + 1)
+      currentMerge.count++
+    }
+  })
+  
+  // Don't forget the last merge group
+  if (currentMerge) {
+    mergedPredictions.push(currentMerge)
+  }
+  
+  console.log(`After filtering and merging: ${mergedPredictions.length} tags`)
+  
+  // Add merged predictions as tags
+  mergedPredictions.forEach(pred => {
+    emit('add-tag', {
+      startTime: pred.startTime,
+      endTime: pred.endTime,
+      label: pred.label,
+      isPrediction: true,
+      confidence: pred.confidence
+    })
+  })
 }
 
 const formatModelDate = (isoDate) => {
@@ -774,6 +928,7 @@ onMounted(async () => {
   await nextTick()
   createChart()
   await loadAvailableModels()
+  await loadSeq2PointModels()
 })
 
 watch(() => props.data, () => {
@@ -786,6 +941,15 @@ watch(() => [props.tags, props.selectedRange], () => {
     chartInstance.update()
   }
 }, { deep: true })
+
+// Watch for model type changes to load appropriate models
+watch(() => autoLabelSettings.value.modelType, async (newType) => {
+  if (newType === 'seq2point' && seq2pointModels.value.length === 0) {
+    await loadSeq2PointModels()
+  } else if (newType === 'classifier' && availableModels.value.length === 0) {
+    await loadAvailableModels()
+  }
+})
 </script>
 
 <style scoped>
@@ -898,6 +1062,41 @@ canvas {
 
 .form-group {
   margin-bottom: 1.5rem;
+}
+
+.model-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.checkbox-label:hover {
+  background: #f8f9fa;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.loading-hint, .hint {
+  padding: 1rem;
+  text-align: center;
+  color: #666;
+  font-style: italic;
+  font-size: 0.9rem;
 }
 
 .form-group label {

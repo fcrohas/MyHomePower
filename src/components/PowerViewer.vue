@@ -107,6 +107,7 @@
             @delete-tag="deleteTag"
             @clear-selection="clearSelection"
             @sensors-changed="onSensorsChanged"
+            @models-changed="onModelsChanged"
           />
         </div>
       </div>
@@ -203,6 +204,7 @@ const selectedDate = ref(format(new Date(), 'yyyy-MM-dd'))
 const powerData = ref([])
 const rawPowerData = ref([]) // Store original data before subtraction
 const subtractedSensorIds = ref([])
+const subtractedModelNames = ref([])
 const tags = ref([])
 const selectedRange = ref(null)
 
@@ -294,8 +296,8 @@ const loadData = async () => {
       value: parseFloat(item.state)
     })).filter(item => !isNaN(item.value))
     
-    // Apply sensor subtractions if any
-    await applySensorSubtractions()
+    // Apply all subtractions (sensors and models) if any
+    await applyAllSubtractions()
     
   } catch (err) {
     error.value = 'Failed to load data: ' + err.message
@@ -368,14 +370,26 @@ const onSensorsChanged = async (sensorIds) => {
   console.log('Contents:', JSON.stringify(sensorIds))
   subtractedSensorIds.value = sensorIds
   console.log('subtractedSensorIds.value set to:', subtractedSensorIds.value)
-  await applySensorSubtractions()
+  await applyAllSubtractions()
 }
 
-// Apply sensor subtractions
-const applySensorSubtractions = async () => {
-  console.log('applySensorSubtractions called', {
+// Handle models changed event
+const onModelsChanged = async (modelNames) => {
+  console.log('🔥 onModelsChanged called with:', modelNames)
+  console.log('Type:', typeof modelNames, 'Is Array:', Array.isArray(modelNames))
+  console.log('Length:', modelNames?.length)
+  console.log('Contents:', JSON.stringify(modelNames))
+  subtractedModelNames.value = modelNames
+  console.log('subtractedModelNames.value set to:', subtractedModelNames.value)
+  await applyAllSubtractions()
+}
+
+// Apply all subtractions (sensors and models)
+const applyAllSubtractions = async () => {
+  console.log('applyAllSubtractions called', {
     hasRawData: rawPowerData.value?.length > 0,
-    sensorIds: subtractedSensorIds.value
+    sensorIds: subtractedSensorIds.value,
+    modelNames: subtractedModelNames.value
   })
   
   if (!rawPowerData.value || rawPowerData.value.length === 0) {
@@ -386,9 +400,23 @@ const applySensorSubtractions = async () => {
   // Start with raw data
   powerData.value = [...rawPowerData.value]
   
+  // Apply sensor subtractions first
+  await applySensorSubtractions()
+  
+  // Then apply model subtractions
+  await applyModelSubtractions()
+}
+
+// Apply sensor subtractions
+const applySensorSubtractions = async () => {
+  console.log('applySensorSubtractions called', {
+    hasData: powerData.value?.length > 0,
+    sensorIds: subtractedSensorIds.value
+  })
+  
   // If no sensors to subtract, we're done
   if (!subtractedSensorIds.value || subtractedSensorIds.value.length === 0) {
-    console.log('No sensors to subtract, using raw data')
+    console.log('No sensors to subtract')
     return
   }
   
@@ -408,7 +436,6 @@ const applySensorSubtractions = async () => {
         const sensorHistory = await fetchHistory(haUrl.value, haToken.value, sensorId, startDate, endDate)
         
         console.log(`Got ${sensorHistory.length} data points for ${sensorId}`)
-        console.log('First 5 data points:', sensorHistory.slice(0, 5))
         
         const sensorData = sensorHistory.map(item => ({
           timestamp: item.last_changed,
@@ -416,21 +443,10 @@ const applySensorSubtractions = async () => {
         })).filter(item => !isNaN(item.value))
         
         console.log(`Processed ${sensorData.length} valid data points for ${sensorId}`)
-        console.log('First 5 processed points:', sensorData.slice(0, 5))
-        console.log('Value range:', {
-          min: Math.min(...sensorData.map(d => d.value)),
-          max: Math.max(...sensorData.map(d => d.value)),
-          avg: sensorData.reduce((sum, d) => sum + d.value, 0) / sensorData.length
-        })
         
         // Subtract sensor data from power data
-        const beforeLength = powerData.value.length
-        const beforeFirst5 = powerData.value.slice(0, 5).map(d => d.value)
         powerData.value = subtractSensorData(powerData.value, sensorData)
-        const afterFirst5 = powerData.value.slice(0, 5).map(d => d.value)
-        console.log(`Subtraction complete: ${beforeLength} points processed`)
-        console.log('Before subtraction (first 5 values):', beforeFirst5)
-        console.log('After subtraction (first 5 values):', afterFirst5)
+        console.log(`Subtraction complete for ${sensorId}`)
         
       } catch (err) {
         console.error(`Failed to fetch history for ${sensorId}:`, err)
@@ -441,6 +457,103 @@ const applySensorSubtractions = async () => {
   } catch (err) {
     console.error('Error applying sensor subtractions:', err)
     error.value = 'Failed to apply sensor subtractions: ' + err.message
+  }
+}
+
+// Apply model subtractions
+const applyModelSubtractions = async () => {
+  console.log('applyModelSubtractions called', {
+    hasData: powerData.value?.length > 0,
+    modelNames: subtractedModelNames.value
+  })
+  
+  // If no models to subtract, we're done
+  if (!subtractedModelNames.value || subtractedModelNames.value.length === 0) {
+    console.log('No models to subtract')
+    return
+  }
+  
+  try {
+    // Calculate standby power for the day (5th percentile to ignore noise)
+    const sortedPower = [...powerData.value].map(d => d.value).sort((a, b) => a - b)
+    const standbyIndex = Math.floor(sortedPower.length * 0.05)
+    const standbyPower = sortedPower[standbyIndex] || 0
+    console.log(`Calculated standby power: ${standbyPower.toFixed(2)}W (5th percentile)`)
+    
+    // Fetch predictions for each model
+    for (const modelName of subtractedModelNames.value) {
+      try {
+        console.log(`Fetching predictions for model ${modelName}...`)
+        
+        // Call predict-day endpoint
+        const response = await fetch('http://localhost:3001/api/seq2point/predict-day', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            appliance: modelName,
+            date: selectedDate.value,
+            powerData: rawPowerData.value.map(d => ({
+              timestamp: d.timestamp,
+              power: d.value
+            }))
+          })
+        })
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: response.statusText }))
+          throw new Error(`Failed to get predictions: ${errorData.error || response.statusText}`)
+        }
+        
+        const data = await response.json()
+        console.log(`Got ${data.predictions.length} predictions for ${modelName}`)
+        console.log('First 5 predictions:', data.predictions.slice(0, 5))
+        
+        // Create a map of current power data by timestamp for easy lookup
+        const powerMap = new Map()
+        powerData.value.forEach(d => {
+          powerMap.set(new Date(d.timestamp).getTime(), d.value)
+        })
+        
+        // Process predictions: subtract standby, cap at actual power in ON zones
+        const modelData = data.predictions.map(p => {
+          if (!p.isOn) {
+            return { timestamp: p.timestamp, value: 0 }
+          }
+          
+          // Subtract standby from prediction
+          let adjustedPower = Math.max(0, p.predictedPower - standbyPower)
+          
+          // Cap prediction at actual power for this timestamp
+          const actualPower = powerMap.get(new Date(p.timestamp).getTime()) || 0
+          adjustedPower = Math.min(adjustedPower, actualPower)
+          
+          return {
+            timestamp: p.timestamp,
+            value: adjustedPower
+          }
+        })
+        
+        const onPredictions = modelData.filter(d => d.value > 0)
+        console.log(`Subtracting model ${modelName} predictions (only when ON, after standby adjustment)...`)
+        console.log('ON count:', data.predictions.filter(p => p.isOn).length)
+        console.log('OFF count:', data.predictions.filter(p => !p.isOn).length)
+        console.log('Total power to subtract:', onPredictions.reduce((sum, d) => sum + d.value, 0).toFixed(2) + 'W')
+        
+        // Subtract model predictions from power data
+        powerData.value = subtractSensorData(powerData.value, modelData)
+        console.log(`Model subtraction complete for ${modelName}`)
+        
+      } catch (err) {
+        console.error(`Failed to apply model ${modelName}:`, err)
+        error.value = `Warning: Failed to subtract model ${modelName}: ${err.message}`
+      }
+    }
+    
+  } catch (err) {
+    console.error('Error applying model subtractions:', err)
+    error.value = 'Failed to apply model subtractions: ' + err.message
   }
 }
 
