@@ -666,7 +666,7 @@ watch(() => props.currentDate, () => {
 const loadAvailableModels = async () => {
   loadingModels.value = true
   try {
-    const response = await fetch('http://localhost:3001/api/seq2point/models')
+    const response = await fetch('/api/seq2point/models')
     if (response.ok) {
       const data = await response.json()
       availableModels.value = (data.models || []).map(m => m.appliance)

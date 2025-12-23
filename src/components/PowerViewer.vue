@@ -282,7 +282,133 @@ const loadData = async () => {
   loading.value = true
   error.value = ''
   
+  console.log(`🔄 loadData called for date: ${selectedDate.value}`)
+  
+  // Try to load from cache first
   try {
+    console.log(`📂 Checking for cached data for ${selectedDate.value}...`)
+    const checkResponse = await fetch(`/api/data/check/${selectedDate.value}`)
+    console.log(`Check response status: ${checkResponse.status}`)
+    
+    if (checkResponse.ok) {
+      const checkData = await checkResponse.json()
+      console.log('✅ Check response:', checkData)
+      
+      if (checkData.hasPowerData) {
+        // Load cached data
+        console.log('📥 Loading cached data...')
+        const loadResponse = await fetch(`/api/data/load/${selectedDate.value}`)
+        console.log(`Load response status: ${loadResponse.status}`)
+        
+        if (loadResponse.ok) {
+          const cachedData = await loadResponse.json()
+          console.log('✅ Cached data loaded:', { 
+            powerDataPoints: cachedData.powerData?.length, 
+            tagsCount: cachedData.tags?.length 
+          })
+          
+          // Use cached power data
+          rawPowerData.value = cachedData.powerData.map(item => ({
+            timestamp: item.timestamp,
+            value: item.power || item.value || parseFloat(item.state || 0)
+          })).filter(item => !isNaN(item.value))
+          
+          console.log(`Mapped ${rawPowerData.value.length} power data points`)
+          
+          // Load cached tags if available
+          if (checkData.hasTags && cachedData.tags && cachedData.tags.length > 0) {
+            console.log('📋 Loading cached tags...', cachedData.tags.length)
+            
+            // Split comma-separated labels and merge consecutive segments with same label
+            const splitTags = []
+            
+            // First, split comma-separated labels
+            cachedData.tags.forEach(tag => {
+              const labels = tag.label.split(',').map(l => l.trim())
+              labels.forEach(label => {
+                splitTags.push({
+                  startTime: tag.startTime,
+                  endTime: tag.endTime,
+                  label: label
+                })
+              })
+            })
+            
+            // Sort by label and start time
+            splitTags.sort((a, b) => {
+              if (a.label !== b.label) return a.label.localeCompare(b.label)
+              return a.startTime.localeCompare(b.startTime)
+            })
+            
+            // Merge consecutive segments with the same label
+            const mergedTags = []
+            let currentTag = null
+            
+            for (const tag of splitTags) {
+              if (!currentTag || currentTag.label !== tag.label || currentTag.endTime !== tag.startTime) {
+                // Start a new tag
+                if (currentTag) {
+                  mergedTags.push(currentTag)
+                }
+                currentTag = {
+                  label: tag.label,
+                  startTime: tag.startTime,
+                  endTime: tag.endTime
+                }
+              } else {
+                // Extend the current tag
+                currentTag.endTime = tag.endTime
+              }
+            }
+            
+            // Add the last tag
+            if (currentTag) {
+              mergedTags.push(currentTag)
+            }
+            
+            // Create tag objects with IDs
+            const newTags = mergedTags.map(tag => ({
+              id: `${selectedDate.value}-${tag.startTime}-${tag.endTime}-${tag.label}-${Date.now()}-${Math.random()}`,
+              date: selectedDate.value,
+              startTime: tag.startTime,
+              endTime: tag.endTime,
+              label: tag.label
+            }))
+            
+            // Remove existing tags for this date before adding new ones
+            tags.value = tags.value.filter(t => t.date !== selectedDate.value)
+            // Add the cached tags
+            tags.value = [...tags.value, ...newTags]
+            saveTags()
+            
+            console.log(`✅ Loaded ${newTags.length} cached tags (merged from ${cachedData.tags.length} segments) for ${selectedDate.value}`)
+          } else {
+            console.log('ℹ️ No cached tags found for this date')
+          }
+          
+          // Apply all subtractions (sensors and models) if any
+          await applyAllSubtractions()
+          
+          loading.value = false
+          console.log(`✅ Successfully loaded cached data for ${selectedDate.value}`)
+          return
+        } else {
+          console.warn('⚠️ Failed to load cached data:', loadResponse.status)
+        }
+      } else {
+        console.log('ℹ️ No cached power data found, will fetch from Home Assistant')
+      }
+    } else {
+      console.warn('⚠️ Check API failed:', checkResponse.status)
+    }
+  } catch (cacheError) {
+    console.error('❌ Error checking/loading cache:', cacheError)
+    console.log('Will fallback to Home Assistant...')
+  }
+  
+  // No cached data or failed to load - fetch from Home Assistant
+  try {
+    console.log('🏠 Fetching from Home Assistant...')
     const startDate = new Date(selectedDate.value)
     startDate.setHours(0, 0, 0, 0)
     
@@ -295,6 +421,8 @@ const loadData = async () => {
       timestamp: item.last_changed,
       value: parseFloat(item.state)
     })).filter(item => !isNaN(item.value))
+    
+    console.log(`✅ Loaded ${rawPowerData.value.length} data points from Home Assistant`)
     
     // Apply all subtractions (sensors and models) if any
     await applyAllSubtractions()

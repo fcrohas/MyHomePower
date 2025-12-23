@@ -144,6 +144,62 @@
               </div>
             </div>
           </div>
+          
+          <div class="config-item checkbox section-divider">
+            <h4 class="section-title">🏠 Home Assistant Integration</h4>
+          </div>
+          <div class="config-item checkbox">
+            <label>
+              <input type="checkbox" v-model="autoSyncToHA" @change="onAutoSyncChange" />
+              Auto-sync predicted power to Home Assistant sensors
+            </label>
+            <span class="config-hint-inline">
+              Creates p_&lt;appliance&gt; sensors with accumulated daily energy (Wh) for energy dashboard
+            </span>
+          </div>
+          <div v-if="autoSyncToHA && lastSyncTime" class="config-item">
+            <div class="sync-status">
+              <span class="sync-label">Last sync:</span>
+              <span class="sync-value">{{ lastSyncTime }}</span>
+            </div>
+            <div v-if="syncStatus" class="sync-message" :class="syncStatus.type">
+              {{ syncStatus.message }}
+            </div>
+          </div>
+          
+          <div class="config-item checkbox section-divider">
+            <h4 class="section-title">🤖 Automatic Background Predictions</h4>
+          </div>
+          <div class="config-item checkbox">
+            <label>
+              <input type="checkbox" v-model="autoRunEnabled" @change="onAutoRunToggle" />
+              Enable automatic predictions every hour
+            </label>
+            <span class="config-hint-inline">
+              Backend runs predictions and updates sensors automatically without UI
+            </span>
+          </div>
+          <div v-if="autoRunEnabled" class="config-item">
+            <div class="auto-run-status">
+              <div class="status-row">
+                <span class="status-label">Status:</span>
+                <span class="status-badge" :class="autoRunStatus.isRunning ? 'running' : 'stopped'">
+                  {{ autoRunStatus.isRunning ? '🟢 Running' : '🔴 Stopped' }}
+                </span>
+              </div>
+              <div v-if="autoRunStatus.lastRun" class="status-row">
+                <span class="status-label">Last run:</span>
+                <span class="status-value">{{ formatAutoRunTime(autoRunStatus.lastRun) }}</span>
+              </div>
+              <div v-if="autoRunStatus.lastStatus" class="status-row">
+                <span class="status-label">Last status:</span>
+                <span class="status-value">{{ autoRunStatus.lastStatus }}</span>
+              </div>
+            </div>
+            <button @click="triggerManualAutoRun" class="btn-manual-run" :disabled="!autoRunStatus.isRunning">
+              ▶️ Run Now
+            </button>
+          </div>
         </div>
         <div class="dialog-footer">
           <button @click="showSettingsDialog = false" class="btn-close">Close</button>
@@ -299,6 +355,8 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { format, parseISO, addDays, subDays } from 'date-fns'
 import Chart from 'chart.js/auto'
 import 'chartjs-adapter-date-fns'
+import { updateHASensor } from '../services/homeassistant'
+import { startAutoPredictor, stopAutoPredictor, getAutoPredictorStatus, triggerManualRun } from '../services/autoPredictor'
 
 const props = defineProps({
   sessionId: {
@@ -325,6 +383,22 @@ const showSettingsDialog = ref(false)
 
 // Configuration
 const threshold = ref(0.25) // Default 25% threshold for detection
+
+// Home Assistant sensor sync configuration
+const autoSyncToHA = ref(localStorage.getItem('autoSyncToHA') === 'true' || false)
+const lastSyncTime = ref(null)
+const syncStatus = ref(null)
+
+// Automatic background predictions
+const autoRunEnabled = ref(localStorage.getItem('autoRunEnabled') === 'true' || false)
+const autoRunStatus = ref({
+  enabled: false,
+  isRunning: false,
+  intervalMinutes: 60,
+  lastRun: null,
+  lastStatus: 'Not started'
+})
+const autoRunCheckInterval = ref(null)
 
 // Seq2point configuration
 const useSeq2Point = ref(true) // Enable seq2point by default
@@ -599,7 +673,7 @@ const getTagColor = (tag) => {
 const loadSeq2PointModels = async () => {
   loadingModels.value = true
   try {
-    const response = await fetch('http://localhost:3001/api/seq2point/models')
+    const response = await fetch('/api/seq2point/models')
     if (response.ok) {
       const data = await response.json()
       // Extract just the appliance names from the model objects
@@ -620,6 +694,101 @@ const loadSeq2PointModels = async () => {
   }
 }
 
+// Handle auto-run toggle
+const onAutoRunToggle = async () => {
+  localStorage.setItem('autoRunEnabled', autoRunEnabled.value.toString())
+  
+  if (autoRunEnabled.value) {
+    try {
+      // Start the auto-predictor with current configuration
+      const config = {
+        intervalMinutes: 60,
+        useSeq2Point: useSeq2Point.value,
+        selectedModels: selectedSeq2PointModels.value,
+        useGSP: useGSP.value,
+        gspConfig: gspConfig.value
+      }
+      
+      await startAutoPredictor(props.sessionId, config)
+      
+      // Update status
+      await updateAutoRunStatus()
+      
+      // Start polling for status updates
+      startAutoRunStatusPolling()
+    } catch (error) {
+      console.error('Failed to start auto-predictor:', error)
+      autoRunEnabled.value = false
+      localStorage.setItem('autoRunEnabled', 'false')
+      alert(`Failed to start automatic predictions: ${error.message}`)
+    }
+  } else {
+    try {
+      await stopAutoPredictor()
+      stopAutoRunStatusPolling()
+      autoRunStatus.value = {
+        enabled: false,
+        isRunning: false,
+        intervalMinutes: 60,
+        lastRun: null,
+        lastStatus: 'Not started'
+      }
+    } catch (error) {
+      console.error('Failed to stop auto-predictor:', error)
+    }
+  }
+}
+
+// Update auto-run status
+const updateAutoRunStatus = async () => {
+  try {
+    const status = await getAutoPredictorStatus()
+    autoRunStatus.value = status
+  } catch (error) {
+    console.error('Failed to get auto-predictor status:', error)
+  }
+}
+
+// Start polling for status updates
+const startAutoRunStatusPolling = () => {
+  if (autoRunCheckInterval.value) {
+    clearInterval(autoRunCheckInterval.value)
+  }
+  
+  // Check status every 30 seconds
+  autoRunCheckInterval.value = setInterval(updateAutoRunStatus, 30000)
+}
+
+// Stop polling for status updates
+const stopAutoRunStatusPolling = () => {
+  if (autoRunCheckInterval.value) {
+    clearInterval(autoRunCheckInterval.value)
+    autoRunCheckInterval.value = null
+  }
+}
+
+// Trigger manual run
+const triggerManualAutoRun = async () => {
+  try {
+    await triggerManualRun()
+    setTimeout(updateAutoRunStatus, 2000) // Update status after 2 seconds
+  } catch (error) {
+    console.error('Failed to trigger manual run:', error)
+    alert(`Failed to trigger manual run: ${error.message}`)
+  }
+}
+
+// Format auto-run time
+const formatAutoRunTime = (isoString) => {
+  if (!isoString) return 'Never'
+  try {
+    const date = parseISO(isoString)
+    return format(date, 'MMM dd, HH:mm:ss')
+  } catch {
+    return isoString
+  }
+}
+
 const onMethodChange = () => {
   // Load seq2point models if enabled and not loaded
   if (useSeq2Point.value && seq2pointModels.value.length === 0) {
@@ -630,6 +799,112 @@ const onMethodChange = () => {
   if (!useSeq2Point.value && !useGSP.value) {
     // If both are disabled, re-enable seq2point as default
     useSeq2Point.value = true
+  }
+}
+
+// Handle auto-sync toggle change
+const onAutoSyncChange = () => {
+  localStorage.setItem('autoSyncToHA', autoSyncToHA.value.toString())
+  if (autoSyncToHA.value) {
+    syncStatus.value = { type: 'info', message: 'Auto-sync enabled. Sensors will be updated after each analysis.' }
+  } else {
+    syncStatus.value = { type: 'info', message: 'Auto-sync disabled.' }
+  }
+}
+
+// Sync predicted power data to Home Assistant sensors
+const syncPredictionsToHA = async () => {
+  if (!autoSyncToHA.value || !props.sessionId) {
+    return
+  }
+  
+  syncStatus.value = { type: 'info', message: 'Syncing sensors to Home Assistant...' }
+  
+  try {
+    // Calculate accumulated energy for each appliance for the entire day
+    const applianceEnergies = {}
+    
+    // Aggregate energy from all prediction windows
+    predictions.value.forEach(pred => {
+      const appliance = pred.tag
+      if (appliance && appliance !== 'standby' && appliance !== 'other' && appliance !== 'baseline') {
+        if (!applianceEnergies[appliance]) {
+          applianceEnergies[appliance] = 0
+        }
+        // Add energy from this prediction window
+        applianceEnergies[appliance] += pred.energy || 0
+      }
+    })
+    
+    // Update sensors with accumulated daily energy
+    const updatePromises = []
+    for (const [appliance, energy] of Object.entries(applianceEnergies)) {
+      if (energy !== undefined) {
+        const roundedEnergy = Math.round(energy * 100) / 100
+        
+        // Create sensor entity ID: sensor.p_ai_<appliance_name>
+        // Sanitize appliance name for entity ID (lowercase, replace spaces with underscores)
+        const sanitizedName = appliance.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+        const entityId = `sensor.p_ai_${sanitizedName}`
+        
+        // First, mark any old sensor as unavailable to clean it up
+        // This helps if the device_class changed from power to energy
+        const cleanupPromise = updateHASensor(entityId, 'unavailable', {})
+          .catch(() => {
+            // Ignore errors - sensor might not exist
+          })
+        
+        // Wait a moment then create the new sensor with correct attributes
+        const promise = cleanupPromise.then(() => {
+          // Create attributes for the sensor
+          const attributes = {
+            unit_of_measurement: 'Wh',
+            device_class: 'energy',
+            state_class: 'total_increasing',
+            friendly_name: `Predicted ${appliance} Energy`,
+            icon: 'mdi:lightning-bolt',
+            source: 'AI Power Viewer',
+            appliance: appliance,
+            prediction_date: selectedDate.value,
+            last_updated: new Date().toISOString()
+          }
+          
+          // Update sensor in Home Assistant
+          return updateHASensor(entityId, roundedEnergy, attributes)
+        })
+          .catch(err => {
+            console.error(`Failed to update sensor ${entityId}:`, err)
+            return { error: err.message, entityId }
+          })
+        
+        updatePromises.push(promise)
+      }
+    }
+    
+    // Wait for all updates to complete
+    const results = await Promise.all(updatePromises)
+    const successCount = results.filter(r => !r.error).length
+    const failCount = results.filter(r => r.error).length
+    
+    lastSyncTime.value = format(new Date(), 'HH:mm:ss')
+    
+    if (failCount === 0) {
+      syncStatus.value = { 
+        type: 'success', 
+        message: `✅ Successfully synced ${successCount} sensor${successCount !== 1 ? 's' : ''} to Home Assistant` 
+      }
+    } else {
+      syncStatus.value = { 
+        type: 'warning', 
+        message: `⚠️ Synced ${successCount}/${successCount + failCount} sensors (${failCount} failed)` 
+      }
+    }
+  } catch (error) {
+    console.error('Failed to sync predictions to HA:', error)
+    syncStatus.value = { 
+      type: 'error', 
+      message: `❌ Sync failed: ${error.message}` 
+    }
   }
 }
 
@@ -661,7 +936,7 @@ const loadAndPredict = async () => {
     const endDate = new Date(`${selectedDate.value}T23:59:59`)
     endDate.setHours(endDate.getHours() + 1) // Add 1 hour to get into next day
 
-    const historyResponse = await fetch('http://localhost:3001/api/ha/history', {
+    const historyResponse = await fetch('/api/ha/history', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -719,7 +994,7 @@ const loadAndPredict = async () => {
         const appliance = selectedSeq2PointModels.value[i]
         loadingProgress.value = `Running predictions for ${appliance} (${i + 1}/${selectedSeq2PointModels.value.length})...`
         
-        const seq2pointResponse = await fetch('http://localhost:3001/api/seq2point/predict-day', {
+        const seq2pointResponse = await fetch('/api/seq2point/predict-day', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -901,20 +1176,30 @@ const loadAndPredict = async () => {
       
       // Only render charts if we have predictions
       if (predictions.value.length > 0) {
-        // Render charts
-        loadingProgress.value = 'Rendering visualizations...'
+        // Set loading to false first so charts container becomes visible
+        loading.value = false
+        loadingProgress.value = ''
+        
+        // Render charts after DOM updates
         await nextTick()
         setTimeout(() => {
           renderPowerChart()
           renderPieChart()
         }, 100)
+        
+        // Sync predictions to Home Assistant if enabled (in background)
+        if (autoSyncToHA.value) {
+          syncPredictionsToHA().catch(err => {
+            console.error('Background sync failed:', err)
+          })
+        }
       } else {
         // No appliance activity detected
         error.value = `No appliance activity detected above the ${(threshold.value * 100).toFixed(0)}% confidence threshold on this day. Try lowering the threshold in settings.`
+        loading.value = false
+        loadingProgress.value = ''
       }
       
-      loading.value = false
-      loadingProgress.value = ''
       return
     }
 
@@ -929,7 +1214,7 @@ const loadAndPredict = async () => {
       }))
       
       // Call GSP API
-      const gspResponse = await fetch('http://localhost:3001/api/gsp/analyze-day', {
+      const gspResponse = await fetch('/api/gsp/analyze-day', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1028,26 +1313,39 @@ const loadAndPredict = async () => {
         
         // Render charts if we have predictions
         if (predictions.value.length > 0) {
-          loadingProgress.value = 'Rendering visualizations...'
+          // Set loading to false first so charts container becomes visible
+          loading.value = false
+          loadingProgress.value = ''
+          
+          // Render charts after DOM updates
           await nextTick()
           setTimeout(() => {
             renderPowerChart()
             renderPieChart()
           }, 100)
+          
+          // Sync predictions to Home Assistant if enabled (in background)
+          if (autoSyncToHA.value) {
+            syncPredictionsToHA().catch(err => {
+              console.error('Background sync failed:', err)
+            })
+          }
         } else {
           error.value = gspResult.message || 'No appliances detected by GSP'
+          loading.value = false
+          loadingProgress.value = ''
         }
       } else {
         error.value = gspResult.message || 'GSP did not detect any appliances. Try adjusting the configuration parameters.'
+        loading.value = false
+        loadingProgress.value = ''
       }
       
-      loading.value = false
-      loadingProgress.value = ''
       return
     }
 
     // Call the legacy prediction endpoint
-    const endpoint = 'http://localhost:3001/api/ml/predict-day'
+    const endpoint = '/api/ml/predict-day'
     const requestBody = {
       date: selectedDate.value,
       powerData: powerData.value
@@ -1208,15 +1506,20 @@ const loadAndPredict = async () => {
 
     // Render charts only if we have predictions
     if (predictions.value.length > 0) {
-      loadingProgress.value = 'Rendering visualizations...'
+      // Set loading to false first so charts container becomes visible
+      loading.value = false
+      loadingProgress.value = ''
+      
+      // Render charts after DOM updates
       await nextTick()
-      // Wait a bit more for DOM to be ready
       setTimeout(() => {
         renderPowerChart()
         renderPieChart()
       }, 100)
     } else {
       error.value = 'No appliance activity detected for this day'
+      loading.value = false
+      loadingProgress.value = ''
     }
 
   } catch (err) {
@@ -1229,9 +1532,14 @@ const loadAndPredict = async () => {
 }
 
 const renderPowerChart = () => {
-  if (!powerChartCanvas.value) return
+  console.log('renderPowerChart called, powerData length:', powerData.value.length, 'predictions:', predictions.value.length)
+  if (!powerChartCanvas.value) {
+    console.log('No canvas element found')
+    return
+  }
   
   if (powerData.value.length === 0) {
+    console.log('No power data available for chart')
     return
   }
 
@@ -1550,9 +1858,17 @@ const renderPieChart = () => {
 }
 
 // Lifecycle
-onMounted(() => {
+onMounted(async () => {
   // Load available seq2point models since it's the default
   loadSeq2PointModels()
+  
+  // Check if auto-run was previously enabled and restore status
+  if (autoRunEnabled.value && props.sessionId) {
+    await updateAutoRunStatus()
+    if (autoRunStatus.value.isRunning) {
+      startAutoRunStatusPolling()
+    }
+  }
 })
 
 // Watch for sessionId changes - don't auto-analyze, just clear any error state
@@ -1569,6 +1885,7 @@ onUnmounted(() => {
   if (pieChart.value) {
     pieChart.value.destroy()
   }
+  stopAutoRunStatusPolling()
 })
 </script>
 
@@ -2234,6 +2551,126 @@ tbody tr:hover {
   font-weight: 600;
   color: #2c3e50;
   z-index: 1;
+}
+
+.section-divider {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e0e0e0;
+}
+
+.sync-status {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.5rem;
+  background: #f8f9fa;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.sync-label {
+  font-weight: 600;
+  color: #495057;
+}
+
+.sync-value {
+  color: #6c757d;
+}
+
+.sync-message {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.sync-message.info {
+  background: #d1ecf1;
+  color: #0c5460;
+  border: 1px solid #bee5eb;
+}
+
+.sync-message.success {
+  background: #d4edda;
+  color: #155724;
+  border: 1px solid #c3e6cb;
+}
+
+.sync-message.warning {
+  background: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffeeba;
+}
+
+.sync-message.error {
+  background: #f8d7da;
+  color: #721c24;
+  border: 1px solid #f5c6cb;
+}
+
+.auto-run-status {
+  padding: 0.75rem;
+  background: #f8f9fa;
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+}
+
+.status-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.25rem 0;
+}
+
+.status-label {
+  font-weight: 600;
+  color: #495057;
+  min-width: 80px;
+}
+
+.status-value {
+  color: #6c757d;
+  font-size: 0.9rem;
+}
+
+.status-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.status-badge.running {
+  background: #d4edda;
+  color: #155724;
+}
+
+.status-badge.stopped {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.btn-manual-run {
+  width: 100%;
+  padding: 0.5rem;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+
+.btn-manual-run:hover:not(:disabled) {
+  background: #0056b3;
+}
+
+.btn-manual-run:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 @media (max-width: 1200px) {

@@ -367,7 +367,7 @@ const props = defineProps({
   sessionId: String
 })
 
-const API_BASE = 'http://localhost:3001'
+const API_BASE = ''
 
 // State
 const selectedTag = ref('')

@@ -3,7 +3,7 @@
  */
 
 // Backend API URL - configure this based on your setup
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const API_URL = import.meta.env.VITE_API_URL || ''
 
 let sessionId = null
 
@@ -187,6 +187,41 @@ export async function exportDay(date, tags) {
     throw new Error(error.error || 'Failed to export data')
   }
 
+  const result = await response.json()
+  return result
+}
+
+/**
+ * Update or create a sensor in Home Assistant
+ * @param {string} entityId - Entity ID for the sensor (e.g., 'sensor.p_water_heater')
+ * @param {number|string} state - The state value (e.g., power in watts)
+ * @param {Object} attributes - Sensor attributes (unit_of_measurement, device_class, friendly_name, etc.)
+ */
+export async function updateHASensor(entityId, state, attributes = {}) {
+  const session = sessionId || localStorage.getItem('haSessionId')
+  
+  if (!session) {
+    throw new Error('No active session. Please reconnect.')
+  }
+  
+  const response = await fetch(`${API_URL}/api/ha/update-sensor`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      sessionId: session,
+      entityId,
+      state,
+      attributes
+    })
+  })
+  
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.message || 'Failed to update sensor')
+  }
+  
   const result = await response.json()
   return result
 }

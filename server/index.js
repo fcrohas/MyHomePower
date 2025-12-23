@@ -12,6 +12,7 @@ import { PowerAutoencoder } from './ml/autoencoder.js'
 import { loadAllData, prepareTrainingData, createTensors, preparePredictionInput } from './ml/dataPreprocessing.js'
 import { prepareSeq2PointInput, denormalizePower } from './ml/seq2pointPreprocessing.js'
 import { disaggregatePower } from './ml/gspDisaggregator.js'
+import AutoPredictor from './auto-predictor.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -25,6 +26,13 @@ const PORT = process.env.PORT || 3001
 app.use(cors())
 app.use(express.json({ limit: '50mb' })) // Increase limit for large power data arrays
 app.use(express.urlencoded({ limit: '50mb', extended: true }))
+
+// Serve static files from the dist directory (production build)
+const distPath = path.join(__dirname, '..', 'dist')
+if (fs.existsSync(distPath)) {
+  console.log('📦 Serving frontend from:', distPath)
+  app.use(express.static(distPath))
+}
 
 // Store HA connection info (in production, use a proper session management)
 let haConnections = new Map()
@@ -248,6 +256,64 @@ app.post('/api/ha/disconnect', (req, res) => {
   res.json({ success: true, message: 'Disconnected' })
 })
 
+// Update or create a sensor in Home Assistant
+app.post('/api/ha/update-sensor', async (req, res) => {
+  const { sessionId, entityId, state, attributes } = req.body
+
+  if (!sessionId) {
+    return res.status(400).json({ error: 'Missing sessionId' })
+  }
+
+  if (!entityId || state === undefined) {
+    return res.status(400).json({ error: 'Missing entityId or state' })
+  }
+
+  const connection = haConnections.get(sessionId)
+  if (!connection) {
+    return res.status(401).json({ error: 'Invalid session. Please reconnect.' })
+  }
+
+  const { url, token } = connection
+
+  try {
+    // Use Home Assistant REST API to set state
+    // POST /api/states/<entity_id>
+    const response = await fetch(`${url}/api/states/${entityId}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        state: state,
+        attributes: attributes || {}
+      })
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error(`Failed to update sensor (${response.status}):`, errorText)
+      throw new Error(`Failed to update sensor: ${response.status} ${response.statusText}`)
+    }
+
+    const result = await response.json()
+    console.log(`✅ Updated sensor ${entityId} with state: ${state}`)
+    
+    res.json({ 
+      success: true, 
+      entityId,
+      state: result.state,
+      attributes: result.attributes
+    })
+  } catch (error) {
+    console.error('Sensor update error:', error)
+    res.status(500).json({ 
+      error: 'Failed to update sensor',
+      message: error.message 
+    })
+  }
+})
+
 // Export day data with merged overlapping tags and save to data folder
 app.post('/api/export/day', async (req, res) => {
   const { date, tags, sessionId } = req.body
@@ -401,6 +467,183 @@ app.post('/api/export/day', async (req, res) => {
       error: 'Failed to export data',
       message: error.message 
     })
+  }
+})
+
+// Check if cached power data and tags exist for a date (for PowerChart/TagManager)
+app.get('/api/data/check/:date', async (req, res) => {
+  try {
+    const { date } = req.params
+    const dataDir = path.join(__dirname, '..', 'data')
+    
+    const powerDataFile = path.join(dataDir, `power-data-${date}.json`)
+    const tagsFile = path.join(dataDir, `power-tags-${date}.json`)
+    
+    const hasPowerData = fs.existsSync(powerDataFile)
+    const hasTags = fs.existsSync(tagsFile)
+    
+    console.log(`📂 Check data for ${date}: power=${hasPowerData}, tags=${hasTags}`)
+    
+    res.json({
+      hasPowerData,
+      hasTags,
+      date
+    })
+  } catch (error) {
+    console.error('Check data error:', error)
+    res.status(500).json({ error: 'Failed to check data', message: error.message })
+  }
+})
+
+// Load cached power data and tags for a date (for PowerChart/TagManager)
+app.get('/api/data/load/:date', async (req, res) => {
+  try {
+    const { date } = req.params
+    const dataDir = path.join(__dirname, '..', 'data')
+    
+    const powerDataFile = path.join(dataDir, `power-data-${date}.json`)
+    const tagsFile = path.join(dataDir, `power-tags-${date}.json`)
+    
+    console.log(`📥 Loading data for ${date}...`)
+    
+    let powerData = null
+    let tags = null
+    
+    if (fs.existsSync(powerDataFile)) {
+      const fileData = JSON.parse(fs.readFileSync(powerDataFile, 'utf8'))
+      powerData = fileData.data || fileData
+      console.log(`   ✅ Loaded ${powerData.length} power data points`)
+    }
+    
+    if (fs.existsSync(tagsFile)) {
+      const fileData = JSON.parse(fs.readFileSync(tagsFile, 'utf8'))
+      tags = fileData.entries || fileData
+      console.log(`   ✅ Loaded ${tags.length} tags`)
+    }
+    
+    if (!powerData) {
+      console.log(`   ❌ No power data found for ${date}`)
+      return res.status(404).json({ 
+        error: 'Power data not found',
+        message: 'No power data for this date'
+      })
+    }
+    
+    res.json({
+      success: true,
+      powerData,
+      tags,
+      date
+    })
+  } catch (error) {
+    console.error('Load data error:', error)
+    res.status(500).json({ error: 'Failed to load data', message: error.message })
+  }
+})
+
+// Check if cached predictions and power data exist for a date
+app.get('/api/predictions/check/:date', async (req, res) => {
+  try {
+    const { date } = req.params
+    const dataDir = path.join(__dirname, '..', 'data')
+    
+    const predictionsFile = path.join(dataDir, `predictions-${date}.json`)
+    const powerDataFile = path.join(dataDir, `power-data-${date}.json`)
+    
+    const hasPredictions = fs.existsSync(predictionsFile)
+    const hasPowerData = fs.existsSync(powerDataFile)
+    
+    res.json({
+      hasCachedData: hasPredictions && hasPowerData,
+      hasPredictions,
+      hasPowerData,
+      date
+    })
+  } catch (error) {
+    console.error('Check predictions error:', error)
+    res.status(500).json({ error: 'Failed to check predictions', message: error.message })
+  }
+})
+
+// Load cached predictions and power data for a date
+app.get('/api/predictions/load/:date', async (req, res) => {
+  try {
+    const { date } = req.params
+    const dataDir = path.join(__dirname, '..', 'data')
+    
+    const predictionsFile = path.join(dataDir, `predictions-${date}.json`)
+    const powerDataFile = path.join(dataDir, `power-data-${date}.json`)
+    
+    if (!fs.existsSync(predictionsFile) || !fs.existsSync(powerDataFile)) {
+      return res.status(404).json({ 
+        error: 'Cached data not found',
+        message: 'No cached predictions or power data for this date'
+      })
+    }
+    
+    const predictions = JSON.parse(fs.readFileSync(predictionsFile, 'utf8'))
+    const powerData = JSON.parse(fs.readFileSync(powerDataFile, 'utf8'))
+    
+    res.json({
+      success: true,
+      predictions: predictions.predictions || predictions,
+      powerData: powerData.data || powerData,
+      metadata: predictions.metadata || {},
+      date
+    })
+  } catch (error) {
+    console.error('Load predictions error:', error)
+    res.status(500).json({ error: 'Failed to load predictions', message: error.message })
+  }
+})
+
+// Save predictions for a date
+app.post('/api/predictions/save', async (req, res) => {
+  try {
+    const { date, predictions, powerData, metadata } = req.body
+    
+    if (!date || !predictions) {
+      return res.status(400).json({ error: 'Missing date or predictions' })
+    }
+    
+    const dataDir = path.join(__dirname, '..', 'data')
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true })
+    }
+    
+    // Save predictions file
+    const predictionsFile = path.join(dataDir, `predictions-${date}.json`)
+    const predictionsData = {
+      date,
+      savedAt: new Date().toISOString(),
+      metadata: metadata || {},
+      predictions
+    }
+    fs.writeFileSync(predictionsFile, JSON.stringify(predictionsData, null, 2), 'utf8')
+    
+    // Save power data file if provided and doesn't exist
+    if (powerData) {
+      const powerDataFile = path.join(dataDir, `power-data-${date}.json`)
+      if (!fs.existsSync(powerDataFile)) {
+        const powerExportData = {
+          date,
+          dataPoints: powerData.length,
+          data: powerData
+        }
+        fs.writeFileSync(powerDataFile, JSON.stringify(powerExportData, null, 2), 'utf8')
+      }
+    }
+    
+    console.log(`✅ Saved predictions for ${date} (${predictions.length} windows)`)
+    
+    res.json({
+      success: true,
+      message: `Predictions saved for ${date}`,
+      predictionsCount: predictions.length
+    })
+  } catch (error) {
+    console.error('Save predictions error:', error)
+    res.status(500).json({ error: 'Failed to save predictions', message: error.message })
   }
 })
 
@@ -2278,6 +2521,9 @@ app.post('/api/anomaly/detect', async (req, res) => {
 const seq2pointModels = new Map()
 const seq2pointMetadata = new Map()
 
+// Initialize auto-predictor with shared TensorFlow instance
+const autoPredictor = new AutoPredictor(haConnections, seq2pointModels, seq2pointMetadata, tf)
+
 // List available seq2point models
 app.get('/api/seq2point/models', (req, res) => {
   try {
@@ -2614,6 +2860,116 @@ app.post('/api/seq2point/predict-day', async (req, res) => {
   }
 })
 
+// AUTO-PREDICTOR ENDPOINTS
+// ============================================================
+
+// Start auto-predictor
+app.post('/api/auto-predictor/start', (req, res) => {
+  try {
+    const { sessionId, intervalMinutes, useSeq2Point, selectedModels, useGSP, gspConfig } = req.body
+
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Missing sessionId' })
+    }
+
+    const connection = haConnections.get(sessionId)
+    if (!connection) {
+      return res.status(401).json({ error: 'Invalid session' })
+    }
+
+    const config = {
+      sessionId,
+      intervalMinutes: intervalMinutes || 60,
+      useSeq2Point: useSeq2Point !== undefined ? useSeq2Point : true,
+      selectedModels: selectedModels || [],
+      useGSP: useGSP || false,
+      gspConfig: gspConfig || {
+        sigma: 20,
+        ri: 0.15,
+        T_Positive: 20,
+        T_Negative: -20,
+        alpha: 0.5,
+        beta: 0.5,
+        instancelimit: 3
+      }
+    }
+
+    autoPredictor.start(config)
+
+    res.json({
+      success: true,
+      message: 'Auto-predictor started',
+      status: autoPredictor.getStatus()
+    })
+  } catch (error) {
+    console.error('Error starting auto-predictor:', error)
+    res.status(500).json({ error: 'Failed to start auto-predictor', message: error.message })
+  }
+})
+
+// Stop auto-predictor
+app.post('/api/auto-predictor/stop', (req, res) => {
+  try {
+    autoPredictor.stop()
+    res.json({
+      success: true,
+      message: 'Auto-predictor stopped'
+    })
+  } catch (error) {
+    console.error('Error stopping auto-predictor:', error)
+    res.status(500).json({ error: 'Failed to stop auto-predictor', message: error.message })
+  }
+})
+
+// Get auto-predictor status
+app.get('/api/auto-predictor/status', (req, res) => {
+  try {
+    res.json(autoPredictor.getStatus())
+  } catch (error) {
+    console.error('Error getting auto-predictor status:', error)
+    res.status(500).json({ error: 'Failed to get status', message: error.message })
+  }
+})
+
+// Trigger manual run
+app.post('/api/auto-predictor/run', async (req, res) => {
+  try {
+    if (!autoPredictor.config.sessionId) {
+      return res.status(400).json({ error: 'Auto-predictor not configured' })
+    }
+
+    // Run prediction in background
+    autoPredictor.runPrediction().catch(err => {
+      console.error('Manual prediction run failed:', err)
+    })
+
+    res.json({
+      success: true,
+      message: 'Prediction run started in background',
+      status: autoPredictor.getStatus()
+    })
+  } catch (error) {
+    console.error('Error triggering manual run:', error)
+    res.status(500).json({ error: 'Failed to trigger run', message: error.message })
+  }
+})
+
+// Catch-all route to serve frontend for client-side routing
+// Note: This must be the LAST route defined, after all API routes
+app.use((req, res, next) => {
+  // Skip if this is an API route
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({ error: 'API endpoint not found', path: req.path })
+  }
+  
+  const distPath = path.join(__dirname, '..', 'dist', 'index.html')
+  if (fs.existsSync(distPath)) {
+    res.sendFile(distPath)
+  } else {
+    res.status(404).send('Frontend not built. Run "npm run build" first.')
+  }
+})
+
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 Power Viewer API server running on http://localhost:${PORT}`)
@@ -2747,10 +3103,12 @@ app.get('/api/gsp/config', (req, res) => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully')
+  autoPredictor.stop()
   process.exit(0)
 })
 
 process.on('SIGINT', () => {
   console.log('\nSIGINT received, shutting down gracefully')
+  autoPredictor.stop()
   process.exit(0)
 })

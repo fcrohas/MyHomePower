@@ -627,7 +627,7 @@ const handleMouseLeave = () => {
 // Auto Label Methods
 const loadAvailableModels = async () => {
   try {
-    const response = await fetch('http://localhost:3001/api/ml/models')
+    const response = await fetch('/api/ml/models')
     if (response.ok) {
       const models = await response.json()
       // Handle both array and object response formats
@@ -642,7 +642,7 @@ const loadAvailableModels = async () => {
 const loadSeq2PointModels = async () => {
   loadingSeq2PointModels.value = true
   try {
-    const response = await fetch('http://localhost:3001/api/seq2point/models')
+    const response = await fetch('/api/seq2point/models')
     if (response.ok) {
       const data = await response.json()
       seq2pointModels.value = (data.models || []).map(m => m.appliance)
@@ -703,7 +703,7 @@ const runSeq2PointAutoLabel = async () => {
   for (const modelName of autoLabelSettings.value.selectedSeq2PointModels) {
     console.log(`Getting predictions from ${modelName}...`)
     
-    const response = await fetch('http://localhost:3001/api/seq2point/predict-day', {
+    const response = await fetch('/api/seq2point/predict-day', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -785,7 +785,7 @@ const runSeq2PointAutoLabel = async () => {
 const runClassifierAutoLabel = async () => {
   // Load the selected model first if specified
   if (autoLabelSettings.value.modelId) {
-    const loadResponse = await fetch('http://localhost:3001/api/ml/models/load', {
+    const loadResponse = await fetch('/api/ml/models/load', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ modelId: autoLabelSettings.value.modelId })
@@ -803,7 +803,7 @@ const runClassifierAutoLabel = async () => {
   }))
   
   // Call the sliding window prediction API
-  const response = await fetch('http://localhost:3001/api/ml/predict-day-sliding', {
+  const response = await fetch('/api/ml/predict-day-sliding', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

@@ -1,0 +1,45 @@
+# Node
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Build outputs
+dist
+*.log
+
+# Development
+.git
+.gitignore
+.vscode
+.idea
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python (if any)
+__pycache__
+*.py[cod]
+*$py.class
+.venv
+venv/
+*.egg-info
+
+# Models (can be large, mount as volume if needed)
+models/trained/*
+models/seq2point/*
+
+# Documentation
+*.md
+!README.md
+
+# Test files
+test/
+tests/
+*.test.js
+*.spec.js

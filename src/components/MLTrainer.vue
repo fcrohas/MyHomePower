@@ -464,7 +464,7 @@ export default {
   methods: {
     async checkModelStatus() {
       try {
-        const response = await fetch('http://localhost:3001/api/ml/status')
+        const response = await fetch('/api/ml/status')
         const data = await response.json()
         this.modelTrained = data.modelLoaded
         this.trainingMetadata = data.metadata
@@ -490,7 +490,7 @@ export default {
 
     async loadModelsList() {
       try {
-        const response = await fetch('http://localhost:3001/api/ml/models')
+        const response = await fetch('/api/ml/models')
         const data = await response.json()
         // Handle both array and object response formats
         this.savedModels = Array.isArray(data) ? data : (data.models || [])
@@ -504,7 +504,7 @@ export default {
       this.error = null
 
       try {
-        const response = await fetch('http://localhost:3001/api/ml/models/load', {
+        const response = await fetch('/api/ml/models/load', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -558,7 +558,7 @@ export default {
       this.error = null
 
       try {
-        const response = await fetch(`http://localhost:3001/api/ml/models/${modelId}`, {
+        const response = await fetch(`/api/ml/models/${modelId}`, {
           method: 'DELETE'
         })
 
@@ -608,7 +608,7 @@ export default {
       this.error = null
 
       try {
-        const response = await fetch(`http://localhost:3001/api/ml/models/${modelId}/name`, {
+        const response = await fetch(`/api/ml/models/${modelId}/name`, {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json'
@@ -691,7 +691,7 @@ export default {
         // Include max epochs setting
         requestBody.maxEpochs = this.maxEpochs
 
-        const response = await fetch('http://localhost:3001/api/ml/train', {
+        const response = await fetch('/api/ml/train', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -787,7 +787,7 @@ export default {
 
     async stopTraining() {
       try {
-        const response = await fetch('http://localhost:3001/api/ml/stop', {
+        const response = await fetch('/api/ml/stop', {
           method: 'POST'
         })
         
