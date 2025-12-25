@@ -61,17 +61,26 @@ class AutoPredictor {
       return
     }
 
-    console.log(`🤖 Starting auto-predictor (every ${this.config.intervalMinutes} minutes)`)
+    console.log(`🤖 Starting auto-predictor (aligned to full hours)`)
     this.isRunning = true
     this.config.enabled = true
 
-    // Run immediately on start
-    this.runPrediction()
+    // Calculate time until the next full hour
+    const now = new Date()
+    const minutesUntilNextHour = 60 - now.getMinutes()
+    const secondsUntilNextHour = (minutesUntilNextHour * 60) - now.getSeconds()
+    const millisecondsUntilNextHour = secondsUntilNextHour * 1000
 
-    // Schedule periodic runs
-    this.intervalId = setInterval(() => {
+    // Schedule the first prediction to align with the next full hour
+    setTimeout(() => {
       this.runPrediction()
-    }, this.config.intervalMinutes * 60 * 1000)
+
+      // Schedule subsequent predictions every hour
+      this.intervalId = setInterval(() => {
+        this.runPrediction()
+      }, 60 * 60 * 1000) // 1 hour interval
+
+    }, millisecondsUntilNextHour)
   }
 
   /**
