@@ -65,22 +65,22 @@ class AutoPredictor {
     this.isRunning = true
     this.config.enabled = true
 
-    // Calculate time until the next full hour
-    const now = new Date()
-    const minutesUntilNextHour = 60 - now.getMinutes()
-    const secondsUntilNextHour = (minutesUntilNextHour * 60) - now.getSeconds()
-    const millisecondsUntilNextHour = secondsUntilNextHour * 1000
+    // Calculate time until 1 minute before the next full hour
+    const now = new Date();
+    const minutesUntilNextHour = 59 - now.getMinutes();
+    const secondsUntilNextMinute = (minutesUntilNextHour * 60) - now.getSeconds();
+    const millisecondsUntilNextMinute = secondsUntilNextMinute * 1000;
 
-    // Schedule the first prediction to align with the next full hour
+    // Schedule the first prediction to align with 1 minute before the next full hour
     setTimeout(() => {
-      this.runPrediction()
+      this.runPrediction();
 
-      // Schedule subsequent predictions every hour
+      // Schedule subsequent predictions every hour minus 1 minute
       this.intervalId = setInterval(() => {
-        this.runPrediction()
-      }, 60 * 60 * 1000) // 1 hour interval
+        this.runPrediction();
+      }, 60 * 60 * 1000); // 1 hour interval
 
-    }, millisecondsUntilNextHour)
+    }, millisecondsUntilNextMinute);
   }
 
   /**
