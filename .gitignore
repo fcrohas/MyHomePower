@@ -29,6 +29,7 @@ dist-ssr
 *.sw?
 data/
 venv/
+.venv/
 __pycache__/
 *.pyc
 samplecode/

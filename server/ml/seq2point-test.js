@@ -8,6 +8,12 @@ import { prepareSeq2PointInput, denormalizePower } from './seq2pointPreprocessin
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
+// Helper function to sanitize appliance names for file system usage
+function sanitizeApplianceName(appliance) {
+  // Replace spaces and special characters with underscores
+  return appliance.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '_')
+}
+
 /**
  * Test a trained seq2point model
  * 
@@ -34,7 +40,7 @@ async function testSeq2PointModel() {
   try {
     // Setup paths
     const dataDir = path.join(__dirname, '../../data')
-    const modelPath = path.join(__dirname, 'saved_models', `seq2point_${appliance}_model`)
+    const modelPath = path.join(__dirname, 'saved_models', `seq2point_${sanitizeApplianceName(appliance)}_model`)
     const metadataPath = path.join(modelPath, 'metadata.json')
 
     // Load metadata
@@ -103,7 +109,7 @@ async function testSeq2PointModel() {
       const window = aggregatePowers.slice(i, i + windowLength)
       const inputTensor = prepareSeq2PointInput(window, windowLength, mainsStats)
       
-      const predictionResult = model.predict(inputTensor)
+      const predictionResult = await model.predict(inputTensor)
       
       // Handle multi-task output (array) or single-task output (tensor)
       let powerTensor, onoffTensor

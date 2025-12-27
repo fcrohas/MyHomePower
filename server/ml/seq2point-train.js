@@ -1,11 +1,18 @@
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
+import tf from './tf-provider.js'
 import { PowerTagPredictor } from './model.js'
 import { prepareSeq2PointDataset } from './seq2pointPreprocessing.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
+
+// Helper function to sanitize appliance names for file system usage
+function sanitizeApplianceName(appliance) {
+  // Replace spaces and special characters with underscores
+  return appliance.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '_')
+}
 
 /**
  * Train a seq2point model for a specific appliance
@@ -45,7 +52,7 @@ async function trainSeq2PointModel() {
     // Setup paths
     const dataDir = path.join(__dirname, '../../data')
     const modelSaveDir = path.join(__dirname, 'saved_models')
-    const modelPath = path.join(modelSaveDir, `seq2point_${targetAppliance}_model`)
+    const modelPath = path.join(modelSaveDir, `seq2point_${sanitizeApplianceName(targetAppliance)}_model`)
 
     // Create model save directory if it doesn't exist
     const fs = await import('fs')
@@ -98,9 +105,8 @@ async function trainSeq2PointModel() {
       
       // Recompile the loaded model (loaded models don't retain compilation settings)
       console.log('   Compiling loaded model...')
-      const tf = await import('@tensorflow/tfjs-node-gpu')
       model.model.compile({
-        optimizer: tf.default.train.adam(0.001, 0.9, 0.999),
+        optimizer: tf.train.adam(0.001, 0.9, 0.999),
         loss: 'meanSquaredError',
         metrics: ['mse', 'mae']
       })

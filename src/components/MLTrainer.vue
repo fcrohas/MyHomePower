@@ -278,6 +278,7 @@
               <th>Samples</th>
               <th>Appliance</th>
               <th>Val MAE</th>
+              <th>Inference</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
@@ -312,6 +313,20 @@
                 </span>
               </td>
               <td>
+                <div v-if="model.hasOnnx" class="inference-toggle">
+                  <label class="toggle-switch">
+                    <input 
+                      type="checkbox"
+                      :checked="model.useOnnx"
+                      @change="toggleInferenceEngine(model.appliance, $event.target.checked)"
+                    />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="inference-label">{{ model.useOnnx ? 'ONNX' : 'TFJS' }}</span>
+                </div>
+                <span v-else class="inference-label-na">—</span>
+              </td>
+              <td>
                 <span v-if="model.isActive" class="status-badge active">Active</span>
                 <span v-else class="status-badge inactive">Inactive</span>
               </td>
@@ -323,6 +338,15 @@
                   :disabled="loadingModel"
                 >
                   Load
+                </button>
+                <button 
+                  @click="convertToONNX(model.appliance)"
+                  class="btn btn-small btn-onnx"
+                  :class="{ 'onnx-converted': model.hasOnnx }"
+                  :disabled="convertingModel === model.appliance"
+                  :title="model.hasOnnx ? 'ONNX model available (click to reconvert)' : 'Convert to ONNX for faster inference'"
+                >
+                  {{ convertingModel === model.appliance ? '...' : (model.hasOnnx ? '✓ ONNX' : 'ONNX') }}
                 </button>
                 <button 
                   v-if="!model.isActive"
@@ -380,6 +404,19 @@
     <div v-if="error" class="error-message">
       {{ error }}
     </div>
+
+    <!-- Toast Notifications -->
+    <div class="toast-container">
+      <div 
+        v-for="toast in toasts" 
+        :key="toast.id"
+        class="toast"
+        :class="toast.type"
+      >
+        <span class="toast-icon">{{ toast.icon }}</span>
+        <span class="toast-message">{{ toast.message }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -410,6 +447,7 @@ export default {
       trainingMetadata: null,
       savedModels: [],
       loadingModel: false,
+      convertingModel: null,
       deletingModel: false,
       editingModelId: null,
       editingModelName: '',
@@ -426,7 +464,8 @@ export default {
       stoppedEarly: false,
       maxEpochs: 30,
       windowLength: 599,
-      batchSize: 1000
+      batchSize: 1000,
+      toasts: []
     }
   },
   computed: {
@@ -490,10 +529,23 @@ export default {
 
     async loadModelsList() {
       try {
-        const response = await fetch('/api/ml/models')
+        const response = await fetch('/api/seq2point/models')
         const data = await response.json()
-        // Handle both array and object response formats
-        this.savedModels = Array.isArray(data) ? data : (data.models || [])
+        // Handle response format from seq2point endpoint
+        const models = data.models || []
+        
+        // Transform to match expected structure
+        this.savedModels = models.map(model => ({
+          id: model.appliance, // Use appliance name as ID for seq2point models
+          appliance: model.appliance,
+          name: model.metadata?.name || `Seq2Point ${model.appliance}`,
+          trainedAt: model.metadata?.trainedAt,
+          datasetInfo: model.metadata?.datasetInfo,
+          finalMetrics: model.metadata?.finalMetrics,
+          isActive: model.loaded,
+          hasOnnx: model.hasOnnx,
+          useOnnx: model.useOnnx || false
+        }))
       } catch (err) {
         console.error('Failed to load models list:', err)
       }
@@ -575,6 +627,94 @@ export default {
       } finally {
         this.deletingModel = false
       }
+    },
+
+    async toggleInferenceEngine(appliance, useOnnx) {
+      try {
+        const response = await fetch('/api/seq2point/set-inference-engine', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ appliance, useOnnx })
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to set inference engine')
+        }
+
+        // Update local state
+        const model = this.savedModels.find(m => m.appliance === appliance)
+        if (model) {
+          model.useOnnx = useOnnx
+        }
+
+        this.showToast(`Switched to ${useOnnx ? 'ONNX' : 'TensorFlow.js'} for ${appliance}`, 'success')
+      } catch (err) {
+        this.showToast('Failed to switch inference engine: ' + err.message, 'error')
+        console.error('Toggle inference error:', err)
+      }
+    },
+
+    async convertToONNX(appliance) {
+      if (!appliance) return
+      
+      this.convertingModel = appliance
+      this.error = null
+
+      try {
+        const response = await fetch('/api/seq2point/convert-onnx', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ appliance })
+        })
+
+        if (!response.ok) {
+          const data = await response.json()
+          throw new Error(data.message || 'Failed to convert model to ONNX')
+        }
+
+        const data = await response.json()
+        this.showToast(data.message, 'success')
+        console.log('✅ ONNX conversion successful:', data.path)
+        
+        // Refresh models list to update ONNX status
+        await this.loadModelsList()
+      } catch (err) {
+        this.showToast('ONNX conversion failed: ' + err.message, 'error')
+        console.error('ONNX conversion error:', err)
+      } finally {
+        this.convertingModel = null
+      }
+    },
+
+    showToast(message, type = 'info') {
+      const id = Date.now()
+      const icons = {
+        success: '✅',
+        error: '❌',
+        info: 'ℹ️',
+        warning: '⚠️'
+      }
+      
+      const toast = {
+        id,
+        message,
+        type,
+        icon: icons[type] || icons.info
+      }
+      
+      this.toasts.push(toast)
+      
+      // Auto-remove after 4 seconds
+      setTimeout(() => {
+        const index = this.toasts.findIndex(t => t.id === id)
+        if (index > -1) {
+          this.toasts.splice(index, 1)
+        }
+      }, 4000)
     },
 
     getMaeClass(mae) {
@@ -806,7 +946,7 @@ export default {
 
     async loadHistory() {
       try {
-        const response = await fetch('http://localhost:3001/api/ml/history')
+        const response = await fetch('/api/ml/history')
         const data = await response.json()
         
         if (data.history && data.history.length > 0) {
@@ -973,7 +1113,7 @@ export default {
     async loadAvailableTags() {
       this.loadingTags = true
       try {
-        const response = await fetch('http://localhost:3001/api/ml/available-tags')
+        const response = await fetch('/api/ml/available-tags')
         if (!response.ok) {
           throw new Error('Failed to fetch available tags')
         }
@@ -1023,7 +1163,7 @@ export default {
         console.log('First data point:', transformedData[0])
         console.log('Last data point:', transformedData[transformedData.length - 1])
 
-        const response = await fetch('http://localhost:3001/api/ml/predict', {
+        const response = await fetch('/api/ml/predict', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -1547,6 +1687,24 @@ export default {
   background: #35a372;
 }
 
+.btn-onnx {
+  background: #4a90e2;
+  color: white;
+}
+
+.btn-onnx:hover:not(:disabled) {
+  background: #357abd;
+}
+
+.btn-onnx.onnx-converted {
+  background: #28a745;
+  border: 2px solid #1e7e34;
+}
+
+.btn-onnx.onnx-converted:hover:not(:disabled) {
+  background: #218838;
+}
+
 .btn-delete {
   background: #dc3545;
   color: white;
@@ -1861,9 +2019,146 @@ export default {
   opacity: 0.6;
 }
 
+/* Toast Notifications */
+.toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 400px;
+}
+
+.toast {
+  background: white;
+  padding: 16px 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  animation: slideIn 0.3s ease-out;
+  border-left: 4px solid;
+}
+
+.toast.success {
+  border-left-color: #28a745;
+  background: #f0f9f4;
+}
+
+.toast.error {
+  border-left-color: #dc3545;
+  background: #fef5f5;
+}
+
+.toast.warning {
+  border-left-color: #ffc107;
+  background: #fffbf0;
+}
+
+.toast.info {
+  border-left-color: #17a2b8;
+  background: #f0f8fa;
+}
+
+.toast-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.toast-message {
+  flex: 1;
+  font-size: 14px;
+  color: #333;
+  font-weight: 500;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
 .param-hint {
   font-size: 12px;
   color: #999;
   font-style: italic;
 }
+
+/* Inference Engine Toggle */
+.inference-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: 0.3s;
+  border-radius: 24px;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.3s;
+  border-radius: 50%;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background-color: #4a90e2;
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+  transform: translateX(20px);
+}
+
+.toggle-switch input:disabled + .toggle-slider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.inference-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #666;
+  min-width: 40px;
+}
+
+.inference-label-na {
+  color: #ccc;
+  font-size: 14px;
+}
+
 </style>

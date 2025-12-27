@@ -12,12 +12,19 @@ import { PowerTagPredictor } from './ml/model.js'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
+// Helper function to sanitize appliance names for file system usage
+function sanitizeApplianceName(appliance) {
+  // Replace spaces and special characters with underscores
+  return appliance.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '_')
+}
+
 class AutoPredictor {
-  constructor(haConnections, seq2pointModels, seq2pointMetadata, tf) {
+  constructor(haConnections, seq2pointModels, seq2pointMetadata, tf, useOnnxForModel) {
     this.haConnections = haConnections
     this.seq2pointModels = seq2pointModels
     this.seq2pointMetadata = seq2pointMetadata
     this.tf = tf // Use shared TensorFlow instance from server
+    this.useOnnxForModel = useOnnxForModel // Shared inference engine preference
     this.intervalId = null
     this.isRunning = false
     this.config = {
@@ -176,7 +183,7 @@ class AutoPredictor {
           try {
             // Load model if not in memory (use shared models from server)
             if (!this.seq2pointModels.has(appliance)) {
-              const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${appliance}_model`)
+              const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${sanitizeApplianceName(appliance)}_model`)
               const metadataPath = path.join(modelDir, 'metadata.json')
 
               if (!fs.existsSync(metadataPath)) {
@@ -194,7 +201,17 @@ class AutoPredictor {
                 applianceStd: metadata.applianceStats.std
               })
               
-              await model.load(modelDir)
+              // Use inference engine preference (default to TFJS for accuracy)
+              const useOnnx = this.useOnnxForModel.get(appliance) === true
+              const onnxPath = path.join(modelDir, 'model.onnx')
+              
+              if (useOnnx && fs.existsSync(onnxPath)) {
+                await model.loadONNX(onnxPath)
+                console.log(`  ✓ Loaded ONNX model for ${appliance}`)
+              } else {
+                await model.load(modelDir)
+                console.log(`  ✓ Loaded TensorFlow.js model for ${appliance}`)
+              }
               
               // Store in shared Maps
               this.seq2pointModels.set(appliance, model)
@@ -241,7 +258,7 @@ class AutoPredictor {
               }
 
               const inputTensor = this.tf.tensor2d(windows)
-              const predictionResult = model.predict(inputTensor)
+              const predictionResult = await model.predict(inputTensor)
               
               // Handle multi-task output (array) or single-task output (tensor)
               let powerTensor, onoffTensor

@@ -5,7 +5,7 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
-import * as tf from '@tensorflow/tfjs-node-gpu'
+import tf from './ml/tf-provider.js'
 import { PowerTagPredictor } from './ml/model.js'
 import { SlidingWindowPredictor } from './ml/slidingWindowPredictor.js'
 import { PowerAutoencoder } from './ml/autoencoder.js'
@@ -48,6 +48,16 @@ let currentModelId = null
 
 // Autoencoder for anomaly detection
 let autoencoderModels = new Map() // Map of tag -> autoencoder model
+
+// Helper function to sanitize appliance names for file system usage
+function sanitizeApplianceName(appliance) {
+  // Replace spaces and special characters with underscores
+  return appliance.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '_')
+}
+
+// Track which models should use ONNX inference
+const useOnnxForModel = new Map() // Map of appliance -> boolean
+
 let autoencoderTraining = new Map() // Map of tag -> training status
 
 // Health check
@@ -793,7 +803,7 @@ app.post('/api/ml/train', async (req, res) => {
       } : null
 
       // Prepare model directory for auto-save (seq2point models go to saved_models)
-      const modelId = `seq2point_${appliance}_model`
+      const modelId = `seq2point_${sanitizeApplianceName(appliance)}_model`
       const modelsBaseDir = path.join(__dirname, 'ml', 'saved_models')
       const modelDir = path.join(modelsBaseDir, modelId)
       
@@ -1365,7 +1375,7 @@ app.post('/api/ml/predict', async (req, res) => {
     const inputTensor = preparePredictionInput(powerData, mlStats)
 
     // Make prediction
-    const predictions = mlModel.predict(inputTensor)
+    const predictions = await mlModel.predict(inputTensor)
     const predictionArray = await predictions.array()
 
     // Get probabilities for each tag
@@ -1796,7 +1806,7 @@ app.post('/api/ml/predict-day', async (req, res) => {
           const inputTensor = tf.tensor([normalized]).expandDims(-1)
 
           // Make prediction
-          const predictionTensor = mlModel.predict(inputTensor)
+          const predictionTensor = await mlModel.predict(inputTensor)
           const predictionArray = await predictionTensor.array()
 
           // Get tag probabilities
@@ -2521,8 +2531,8 @@ app.post('/api/anomaly/detect', async (req, res) => {
 const seq2pointModels = new Map()
 const seq2pointMetadata = new Map()
 
-// Initialize auto-predictor with shared TensorFlow instance
-const autoPredictor = new AutoPredictor(haConnections, seq2pointModels, seq2pointMetadata, tf)
+// Initialize auto-predictor with shared TensorFlow instance and inference preference
+const autoPredictor = new AutoPredictor(haConnections, seq2pointModels, seq2pointMetadata, tf, useOnnxForModel)
 
 // List available seq2point models
 app.get('/api/seq2point/models', (req, res) => {
@@ -2543,6 +2553,7 @@ app.get('/api/seq2point/models', (req, res) => {
     const models = modelDirs.map(dirName => {
       const modelPath = path.join(modelsDir, dirName)
       const metadataPath = path.join(modelPath, 'metadata.json')
+      const onnxPath = path.join(modelPath, 'model.onnx')
       
       // Extract appliance name from directory name
       const appliance = dirName.replace('seq2point_', '').replace('_model', '')
@@ -2556,7 +2567,9 @@ app.get('/api/seq2point/models', (req, res) => {
         appliance,
         path: modelPath,
         metadata,
-        loaded: seq2pointModels.has(appliance)
+        loaded: seq2pointModels.has(appliance),
+        hasOnnx: fs.existsSync(onnxPath),
+        useOnnx: useOnnxForModel.get(appliance) || false
       }
     })
 
@@ -2570,11 +2583,14 @@ app.get('/api/seq2point/models', (req, res) => {
 // Load a specific seq2point model
 app.post('/api/seq2point/load', async (req, res) => {
   try {
-    const { appliance } = req.body
+    let { appliance } = req.body
 
     if (!appliance) {
       return res.status(400).json({ error: 'Missing appliance name' })
     }
+
+    // Sanitize appliance name to match directory naming
+    appliance = sanitizeApplianceName(appliance)
 
     const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${appliance}_model`)
     const metadataPath = path.join(modelDir, 'metadata.json')
@@ -2585,7 +2601,7 @@ app.post('/api/seq2point/load', async (req, res) => {
 
     const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
     
-    // Create and load model
+    // Create and load model (respect inference engine preference)
     const model = new PowerTagPredictor()
     model.setNormalizationParams({
       mainsMean: metadata.mainsStats.mean,
@@ -2594,7 +2610,17 @@ app.post('/api/seq2point/load', async (req, res) => {
       applianceStd: metadata.applianceStats.std
     })
     
-    await model.load(modelDir)
+    // Check user preference for inference engine (default to TFJS for accuracy)
+    const useOnnx = useOnnxForModel.get(appliance) === true
+    const onnxPath = path.join(modelDir, 'model.onnx')
+    
+    if (useOnnx && fs.existsSync(onnxPath)) {
+      await model.loadONNX(onnxPath)
+      console.log(`✅ Loaded ONNX model for: ${appliance}`)
+    } else {
+      await model.load(modelDir)
+      console.log(`✅ Loaded TensorFlow.js model for: ${appliance}`)
+    }
     
     // Store in memory
     seq2pointModels.set(appliance, model)
@@ -2613,14 +2639,129 @@ app.post('/api/seq2point/load', async (req, res) => {
   }
 })
 
-// Predict appliance power consumption
-app.post('/api/seq2point/predict', async (req, res) => {
+// Convert a seq2point model to ONNX
+app.post('/api/seq2point/convert-onnx', async (req, res) => {
   try {
-    const { appliance, powerData } = req.body
+    let { appliance } = req.body
 
     if (!appliance) {
       return res.status(400).json({ error: 'Missing appliance name' })
     }
+
+    // Sanitize appliance name to match directory naming
+    appliance = sanitizeApplianceName(appliance)
+
+    let model = seq2pointModels.get(appliance)
+    const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${appliance}_model`)
+    const onnxPath = path.join(modelDir, 'model.onnx')
+
+    // If model not in memory, load it first
+    if (!model) {
+      const metadataPath = path.join(modelDir, 'metadata.json')
+      if (!fs.existsSync(metadataPath)) {
+        return res.status(404).json({ error: `Model not found for appliance: ${appliance}` })
+      }
+
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+      model = new PowerTagPredictor()
+      model.setNormalizationParams({
+        mainsMean: metadata.mainsStats.mean,
+        mainsStd: metadata.mainsStats.std,
+        applianceMean: metadata.applianceStats.mean,
+        applianceStd: metadata.applianceStats.std
+      })
+      // Always load TFJS model for conversion (not ONNX)
+      await model.load(modelDir)
+      // Don't store in seq2pointModels yet - conversion will reload as ONNX
+    } else if (!model.model) {
+      // Model is in memory but only has ONNX session, need TFJS model for conversion
+      await model.load(modelDir)
+    }
+
+    // Convert to ONNX
+    await model.convertToONNX(onnxPath)
+
+    res.json({
+      success: true,
+      message: `Model for ${appliance} converted to ONNX successfully`,
+      path: onnxPath
+    })
+  } catch (error) {
+    console.error('Error converting model to ONNX:', error)
+    res.status(500).json({ error: 'Failed to convert model', message: error.message })
+  }
+})
+
+// Set inference engine preference for a model
+app.post('/api/seq2point/set-inference-engine', async (req, res) => {
+  try {
+    let { appliance, useOnnx } = req.body
+
+    if (!appliance) {
+      return res.status(400).json({ error: 'Missing appliance name' })
+    }
+
+    // Sanitize appliance name
+    appliance = sanitizeApplianceName(appliance)
+
+    // Update preference
+    useOnnxForModel.set(appliance, useOnnx)
+    console.log(`Set inference engine for ${appliance}: ${useOnnx ? 'ONNX' : 'TensorFlow.js'}`)
+
+    // If model is loaded, reload it with the new engine
+    if (seq2pointModels.has(appliance)) {
+      const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${appliance}_model`)
+      const metadataPath = path.join(modelDir, 'metadata.json')
+      const onnxPath = path.join(modelDir, 'model.onnx')
+
+      if (!fs.existsSync(metadataPath)) {
+        return res.status(404).json({ error: `Model not found for appliance: ${appliance}` })
+      }
+
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+      const model = new PowerTagPredictor()
+      model.setNormalizationParams({
+        mainsMean: metadata.mainsStats.mean,
+        mainsStd: metadata.mainsStats.std,
+        applianceMean: metadata.applianceStats.mean,
+        applianceStd: metadata.applianceStats.std
+      })
+
+      // Load based on preference
+      if (useOnnx && fs.existsSync(onnxPath)) {
+        await model.loadONNX(onnxPath)
+        console.log(`  Reloaded ${appliance} with ONNX`)
+      } else {
+        await model.load(modelDir)
+        console.log(`  Reloaded ${appliance} with TensorFlow.js`)
+      }
+
+      // Update in memory
+      seq2pointModels.set(appliance, model)
+    }
+
+    res.json({
+      success: true,
+      appliance,
+      useOnnx
+    })
+  } catch (error) {
+    console.error('Error setting inference engine:', error)
+    res.status(500).json({ error: 'Failed to set inference engine', message: error.message })
+  }
+})
+
+// Predict appliance power consumption
+app.post('/api/seq2point/predict', async (req, res) => {
+  try {
+    let { appliance, powerData } = req.body
+
+    if (!appliance) {
+      return res.status(400).json({ error: 'Missing appliance name' })
+    }
+
+    // Sanitize appliance name to match directory naming
+    appliance = sanitizeApplianceName(appliance)
 
     if (!powerData || !Array.isArray(powerData)) {
       return res.status(400).json({ error: 'Missing or invalid powerData array' })
@@ -2645,7 +2786,17 @@ app.post('/api/seq2point/predict', async (req, res) => {
         applianceStd: metadata.applianceStats.std
       })
       
-      await model.load(modelDir)
+      // Check user preference for inference engine (default to TFJS for accuracy)
+      const useOnnx = useOnnxForModel.get(appliance) === true
+      const onnxPath = path.join(modelDir, 'model.onnx')
+      
+      if (useOnnx && fs.existsSync(onnxPath)) {
+        await model.loadONNX(onnxPath)
+        console.log(`✅ Loaded ONNX model for prediction: ${appliance}`)
+      } else {
+        await model.load(modelDir)
+        console.log(`✅ Loaded TensorFlow.js model for prediction: ${appliance}`)
+      }
       
       seq2pointModels.set(appliance, model)
       seq2pointMetadata.set(appliance, metadata)
@@ -2677,7 +2828,7 @@ app.post('/api/seq2point/predict', async (req, res) => {
     const inputTensor = tf.tensor2d([normalized])
 
     // Predict
-    const predictionTensor = model.predict(inputTensor)
+    const predictionTensor = await model.predict(inputTensor)
     const normalizedPower = await predictionTensor.data()
 
     // Denormalize to watts
@@ -2709,11 +2860,14 @@ app.post('/api/seq2point/predict', async (req, res) => {
 // Predict for entire day with sliding window
 app.post('/api/seq2point/predict-day', async (req, res) => {
   try {
-    const { appliance, date, powerData } = req.body
+    let { appliance, date, powerData } = req.body
 
     if (!appliance) {
       return res.status(400).json({ error: 'Missing appliance name' })
     }
+
+    // Sanitize appliance name to match directory naming
+    appliance = sanitizeApplianceName(appliance)
 
     if (!date) {
       return res.status(400).json({ error: 'Missing date' })
@@ -2743,7 +2897,17 @@ app.post('/api/seq2point/predict-day', async (req, res) => {
           applianceStd: metadata.applianceStats.std
         })
         
-        await model.load(modelDir)
+        // Check user preference for inference engine (default to TFJS for accuracy)
+        const useOnnx = useOnnxForModel.get(appliance) === true
+        const onnxPath = path.join(modelDir, 'model.onnx')
+        
+        if (useOnnx && fs.existsSync(onnxPath)) {
+          await model.loadONNX(onnxPath)
+          console.log(`✅ Loaded ONNX model for day prediction: ${appliance}`)
+        } else {
+          await model.load(modelDir)
+          console.log(`✅ Loaded TensorFlow.js model for day prediction: ${appliance}`)
+        }
         
         seq2pointModels.set(appliance, model)
         seq2pointMetadata.set(appliance, metadata)
@@ -2795,7 +2959,7 @@ app.post('/api/seq2point/predict-day', async (req, res) => {
 
       // Batch prediction
       const inputTensor = tf.tensor2d(windows)
-      const predictionResult = model.predict(inputTensor)
+      const predictionResult = await model.predict(inputTensor)
       
       // Handle multi-task output (array) or single-task output (tensor)
       let powerTensor, onoffTensor

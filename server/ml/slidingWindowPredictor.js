@@ -1,4 +1,4 @@
-import * as tf from '@tensorflow/tfjs-node-gpu'
+import tf from './tf-provider.js'
 
 /**
  * Sliding Window Predictor - Simple implementation using base predictor logic
@@ -75,7 +75,7 @@ class SlidingWindowPredictor {
           const inputTensor = tf.tensor([normalized]).expandDims(-1)
           
           // Predict
-          const predictionTensor = this.model.predict(inputTensor)
+          const predictionTensor = await this.model.predict(inputTensor)
           const predictionArray = await predictionTensor.array()
           
           // Get tag probabilities

@@ -1,4 +1,4 @@
-import * as tf from '@tensorflow/tfjs-node-gpu'
+import tf from './tf-provider.js'
 
 /**
  * Autoencoder for Anomaly Detection in Power Curves

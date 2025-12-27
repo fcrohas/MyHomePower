@@ -1,4 +1,17 @@
-import * as tf from '@tensorflow/tfjs-node-gpu'
+import tf from './tf-provider.js'
+import * as ort from 'onnxruntime-node'
+import fs from 'fs'
+import path from 'path'
+import { exec } from 'child_process'
+import { promisify } from 'util'
+
+const execAsync = promisify(exec)
+
+// Helper function to properly escape shell arguments
+function shellEscape(arg) {
+  // Replace single quotes with '\'' and wrap in single quotes
+  return `'${arg.replace(/'/g, "'\\''")}'`
+}
 
 /**
  * ML Model for seq2point NILM (Non-Intrusive Load Monitoring)
@@ -12,6 +25,7 @@ import * as tf from '@tensorflow/tfjs-node-gpu'
 export class PowerTagPredictor {
   constructor() {
     this.model = null
+    this.onnxSession = null
     this.uniqueTags = []
     this.isCompiled = false
     this.inputWindowLength = 599  // Default window length from seq2point paper
@@ -292,7 +306,14 @@ export class PowerTagPredictor {
    * @param {tf.Tensor} x - Input features [batch, inputWindowLength]
    * @returns {tf.Tensor|Array} Predictions - For single-task: [batch, numAppliances]. For multi-task: [powerPredictions, onoffPredictions]
    */
-  predict(x) {
+  async predict(x) {
+    // Dual integration: ONNX or TensorFlow.js
+    if (this.onnxSession) {
+      // console.log('🔵 Using ONNX for prediction')
+      return this.predictONNX(x)
+    }
+
+    // console.log('🟢 Using TensorFlow.js for prediction')
     if (!this.model) {
       throw new Error('Model not built or loaded')
     }
@@ -315,6 +336,59 @@ export class PowerTagPredictor {
     }
     
     throw new Error(`Unexpected prediction format: ${typeof predictions}`)
+  }
+
+  /**
+   * Make predictions using ONNX runtime
+   * @param {tf.Tensor} x - Input features
+   */
+  async predictONNX(x) {
+    if (!this.onnxSession) {
+      throw new Error('ONNX session not initialized')
+    }
+
+    // Convert TF tensor to Float32Array
+    const inputData = await x.data()
+    const inputTensor = new ort.Tensor('float32', inputData, x.shape)
+
+    // Run inference
+    const feeds = {}
+    feeds[this.onnxSession.inputNames[0]] = inputTensor
+    const results = await this.onnxSession.run(feeds)
+
+    // Handle multi-task or single-task output
+    if (this.isMultiTask) {
+      const powerData = results[this.onnxSession.outputNames[1]].data
+      const onoffData = results[this.onnxSession.outputNames[0]].data
+      
+      const powerPredictions = tf.tensor(powerData, results[this.onnxSession.outputNames[1]].dims).maximum(0)
+      const onoffPredictions = tf.tensor(onoffData, results[this.onnxSession.outputNames[0]].dims)
+      
+      return [powerPredictions, onoffPredictions]
+    } else {
+      const outputData = results[this.onnxSession.outputNames[1]].data
+      return tf.tensor(outputData, results[this.onnxSession.outputNames[1]].dims).maximum(0)
+    }
+  }
+
+  /**
+   * Load ONNX model
+   * @param {string} path - Path to .onnx file
+   */
+  async loadONNX(path) {
+    try {
+      this.onnxSession = await ort.InferenceSession.create(path)
+      console.log(`✅ ONNX model loaded from ${path}`)
+      
+      // Detect if multi-task based on output names
+      this.isMultiTask = this.onnxSession.outputNames.includes('power_output') && 
+                         this.onnxSession.outputNames.includes('onoff_output')
+      
+      return true
+    } catch (error) {
+      console.error(`❌ Failed to load ONNX model: ${error.message}`)
+      throw error
+    }
   }
 
   /**
@@ -418,6 +492,86 @@ export class PowerTagPredictor {
    */
   getTags() {
     return this.uniqueTags
+  }
+
+  /**
+   * Convert current TensorFlow.js model to ONNX
+   * Requires Python with tensorflowjs and tf2onnx packages installed
+   * @param {string} savePath - Path to save the .onnx file
+   */
+  async convertToONNX(savePath) {
+    if (!this.model) {
+      throw new Error('No model loaded to convert')
+    }
+
+    console.log(`🔄 Converting model to ONNX: ${savePath}`)
+    
+    try {
+      const modelDir = path.dirname(savePath)
+      const tempDir = path.join(modelDir, 'temp_saved_model')
+      
+      // Step 1: Save model if not already saved
+      const modelJsonPath = path.join(modelDir, 'model.json')
+      if (!fs.existsSync(modelJsonPath)) {
+        console.log('  Saving TensorFlow.js model first...')
+        await this.model.save(`file://${modelDir}`)
+      }
+      
+      // Step 2: Check if Python and required packages are available
+      const venvPython = path.join(process.cwd(), '.venv', 'bin', 'python3')
+      const pythonCmd = fs.existsSync(venvPython) ? venvPython : 'python3'
+      
+      try {
+        await execAsync(`${pythonCmd} --version`)
+      } catch (error) {
+        throw new Error('Python 3 is not installed or not in PATH. Please install Python 3 to use ONNX conversion.')
+      }
+      
+      // Step 3: Convert TFJS to SavedModel format (intermediate step)
+      console.log('  Converting TFJS to Keras SavedModel...')
+      const venvConverter = path.join(process.cwd(), '.venv', 'bin', 'tensorflowjs_converter')
+      const converterCmd = fs.existsSync(venvConverter) ? venvConverter : 'tensorflowjs_converter'
+      
+      try {
+        // Use proper shell escaping to handle spaces in paths
+        const convertCmd = `${shellEscape(converterCmd)} --input_format=tfjs_layers_model --output_format=keras_saved_model ${shellEscape(modelJsonPath)} ${shellEscape(tempDir)}`
+        console.log('  Running:', convertCmd)
+        await execAsync(convertCmd)
+      } catch (error) {
+        if (error.message.includes('command not found') || error.message.includes('not recognized')) {
+          throw new Error('tensorflowjs package not installed. Install with: pip install tensorflowjs')
+        }
+        throw error
+      }
+      
+      // Step 4: Convert SavedModel to ONNX
+      console.log('  Converting Keras SavedModel to ONNX...')
+      try {
+        // Use --saved-model flag as keras_saved_model is compatible with SavedModel format
+        const onnxCmd = `${shellEscape(pythonCmd)} -m tf2onnx.convert --saved-model ${shellEscape(tempDir)} --output ${shellEscape(savePath)} --opset 18`
+        console.log('  Running:', onnxCmd)
+        await execAsync(onnxCmd)
+      } catch (error) {
+        if (error.message.includes('No module named') || error.message.includes('not found')) {
+          throw new Error('tf2onnx package not installed. Install with: pip install tf2onnx')
+        }
+        throw error
+      }
+      
+      // Step 5: Clean up temporary directory
+      console.log('  Cleaning up temporary files...')
+      fs.rmSync(tempDir, { recursive: true, force: true })
+      
+      console.log(`✅ Model converted and saved to ${savePath}`)
+      
+      // Step 6: Load the new ONNX model into the session
+      await this.loadONNX(savePath)
+      
+      return true
+    } catch (error) {
+      console.error(`❌ ONNX conversion failed: ${error.message}`)
+      throw error
+    }
   }
 
   /**

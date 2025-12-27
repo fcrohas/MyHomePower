@@ -26,6 +26,7 @@
     "home-assistant-js-websocket": "^9.6.0",
     "mathjs": "^13.2.2",
     "ml-matrix": "^6.12.1",
+    "onnxruntime-node": "^1.23.2",
     "vue": "^3.5.24",
     "vue-chartjs": "^5.3.3"
   },

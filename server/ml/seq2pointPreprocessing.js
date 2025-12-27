@@ -1,4 +1,4 @@
-import * as tf from '@tensorflow/tfjs-node-gpu'
+import tf from './tf-provider.js'
 import fs from 'fs'
 import path from 'path'
 
