@@ -1,12 +1,5 @@
 <template>
   <div class="anomaly-detector">
-    <div class="detector-header">
-      <h2>🔬 Anomaly Detector</h2>
-      <p class="description">
-        Select a tag to train an autoencoder on normal patterns, then detect anomalous behavior
-      </p>
-    </div>
-
     <!-- Tag Selection -->
     <div class="tag-selection-panel">
       <div class="form-group">

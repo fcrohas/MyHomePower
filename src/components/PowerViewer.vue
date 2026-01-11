@@ -1,68 +1,112 @@
 <template>
   <div class="power-viewer">
-    <!-- Configuration Panel -->
-    <div class="config-panel" v-if="!connected">
-      <h2>Home Assistant Connection</h2>
-      <div class="form-group">
-        <label>Home Assistant URL:</label>
-        <input 
-          v-model="haUrl" 
-          type="text" 
-          placeholder="http://homeassistant.local:8123"
-        />
+    <!-- Login Panel -->
+    <div class="login-panel" v-if="!authenticated">
+      <div class="login-card">
+        <div class="floating-input">
+          <input 
+            v-model="loginUsername" 
+            type="text" 
+            id="username"
+            placeholder="Username"
+            @keyup.enter="login"
+          />
+          <label for="username">Username</label>
+        </div>
+        <div class="floating-input">
+          <input 
+            v-model="loginPassword" 
+            type="password" 
+            id="password"
+            placeholder="Password"
+            @keyup.enter="login"
+          />
+          <label for="password">Password</label>
+        </div>
+        <button class="login-btn" @click="login" :disabled="!loginUsername || !loginPassword || loading">
+          <span class="btn-icon">🔐</span>
+          <span class="btn-text">{{ loading ? 'Connecting...' : 'Login' }}</span>
+        </button>
+        <p class="error" v-if="error">{{ error }}</p>
       </div>
-      <div class="form-group">
-        <label>Access Token:</label>
-        <input 
-          v-model="haToken" 
-          type="password" 
-          placeholder="Your long-lived access token"
-        />
-      </div>
-      <div class="form-group">
-        <label>Power Entity ID:</label>
-        <input 
-          v-model="entityId" 
-          type="text" 
-          placeholder="sensor.power_consumption"
-        />
-      </div>
-      <button @click="connect" :disabled="!haUrl || !haToken || !entityId">
-        Connect
-      </button>
-      <p class="error" v-if="error">{{ error }}</p>
     </div>
 
     <!-- Main Viewer -->
-    <div v-else class="viewer-container">
-      <!-- Tab Navigation -->
-      <div class="tab-navigation">
-        <button 
-          :class="['tab-btn', { active: activeTab === 'tagging' }]"
-          @click="activeTab = 'tagging'"
-        >
-          📊 Power Tagging
+    <div v-else-if="authenticated" class="viewer-container">
+      <!-- Sidebar Navigation -->
+      <aside :class="['sidebar', { collapsed: sidebarCollapsed }]">
+        <!-- Toggle Button -->
+        <button class="sidebar-toggle" @click="toggleSidebar" title="Toggle sidebar">
+          <template v-if="sidebarCollapsed">
+            <span class="toggle-icon">☰</span>
+          </template>
+          <template v-else>
+            <span class="toggle-text">menu</span>
+            <span class="toggle-arrow">←</span>
+          </template>
         </button>
-        <button 
-          :class="['tab-btn', { active: activeTab === 'ml' }]"
-          @click="activeTab = 'ml'"
-        >
-          🧠 ML Trainer
-        </button>
-        <button 
-          :class="['tab-btn', { active: activeTab === 'detector' }]"
-          @click="activeTab = 'detector'"
-        >
-          🔍 Power Detector
-        </button>
-        <button 
-          :class="['tab-btn', { active: activeTab === 'anomaly' }]"
-          @click="activeTab = 'anomaly'"
-        >
-          🔬 Anomaly Detector
-        </button>
-      </div>
 
+        <!-- Menu Items -->
+        <nav class="sidebar-nav">
+          <button 
+            :class="['sidebar-item', { active: activeTab === 'detector' }]"
+            @click="activeTab = 'detector'"
+            :title="sidebarCollapsed ? 'Power Detector' : ''"
+          >
+            <span class="sidebar-icon">🔍</span>
+            <span class="sidebar-label">Power Detector</span>
+          </button>
+          <button 
+            :class="['sidebar-item', { active: activeTab === 'libraries' }]"
+            @click="activeTab = 'libraries'"
+            :title="sidebarCollapsed ? 'Libraries' : ''"
+          >
+            <span class="sidebar-icon">📚</span>
+            <span class="sidebar-label">Libraries</span>
+          </button>
+          <button 
+            :class="['sidebar-item', { active: activeTab === 'ml' }]"
+            @click="activeTab = 'ml'"
+            :title="sidebarCollapsed ? 'ML Trainer' : ''"
+          >
+            <span class="sidebar-icon">🧠</span>
+            <span class="sidebar-label">ML Trainer</span>
+          </button>
+          <button 
+            :class="['sidebar-item', { active: activeTab === 'tagging' }]"
+            @click="activeTab = 'tagging'"
+            :title="sidebarCollapsed ? 'Power Tagging' : ''"
+          >
+            <span class="sidebar-icon">📊</span>
+            <span class="sidebar-label">Power Tagging</span>
+          </button>
+          <button 
+            :class="['sidebar-item', { active: activeTab === 'anomaly' }]"
+            @click="activeTab = 'anomaly'"
+            :title="sidebarCollapsed ? 'Anomaly Detector' : ''"
+          >
+            <span class="sidebar-icon">🔬</span>
+            <span class="sidebar-label">Anomaly Detector</span>
+          </button>
+          <button 
+            :class="['sidebar-item', { active: activeTab === 'settings' }]"
+            @click="activeTab = 'settings'"
+            :title="sidebarCollapsed ? 'Settings' : ''"
+          >
+            <span class="sidebar-icon">⚙️</span>
+            <span class="sidebar-label">Settings</span>
+          </button>
+        </nav>
+
+        <!-- User Info / Logout -->
+        <button class="sidebar-logout" @click="logout" :title="`Logout ${loginUsername}`">
+          <span class="sidebar-icon">👤</span>
+          <span class="sidebar-label">{{ loginUsername }}</span>
+        </button>
+      </aside>
+
+      <!-- Main Content Area -->
+      <div class="main-area">
       <!-- Tagging Tab -->
       <div v-show="activeTab === 'tagging'" class="tab-content">
         <!-- Date Navigation -->
@@ -114,18 +158,6 @@
 
       <!-- Statistics Section Below -->
       <div class="statistics-section" v-if="filteredTags.length > 0">
-        <h2>Statistics</h2>
-        <div class="stats-grid">
-          <div class="stat-item">
-            <span class="stat-label">Total Tagged Periods:</span>
-            <span class="stat-value">{{ filteredTags.length }}</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">Unique Labels:</span>
-            <span class="stat-value">{{ uniqueLabels.size }}</span>
-          </div>
-        </div>
-        
         <div class="label-breakdown">
           <h3>Breakdown by Label:</h3>
           <div class="label-stats-grid">
@@ -140,7 +172,7 @@
 
       <!-- ML Trainer Tab -->
       <div v-show="activeTab === 'ml'" class="tab-content">
-        <MLTrainer :powerData="powerData" />
+        <MLTrainer :powerData="powerData" @send-to-library="handleSendToLibrary" />
       </div>
 
       <!-- Power Detector Tab -->
@@ -153,8 +185,100 @@
         <AnomalyDetector :sessionId="sessionId" />
       </div>
 
+      <!-- Libraries Tab -->
+      <div v-show="activeTab === 'libraries'" class="tab-content">
+        <LibraryManager :preFillData="libraryPreFill" @data-used="libraryPreFill = null" @model-imported="handleModelImported" />
+      </div>
+
+      <!-- Settings Tab -->
+      <div v-show="activeTab === 'settings'" class="tab-content">
+        <div class="settings-container">
+          <div class="settings-tabs">
+            <button 
+              :class="['settings-tab-btn', { active: settingsTab === 'general' }]"
+              @click="settingsTab = 'general'"
+            >
+              General
+            </button>
+            <button 
+              :class="['settings-tab-btn', { active: settingsTab === 'homeassistant' }]"
+              @click="settingsTab = 'homeassistant'"
+            >
+              Home Assistant
+            </button>
+          </div>
+
+          <!-- General Settings -->
+          <div v-show="settingsTab === 'general'" class="settings-content">
+            <h2>General Settings</h2>
+            <div class="settings-section">
+              <h3>Application</h3>
+              <div class="form-group">
+                <label>Default View:</label>
+                <select v-model="settings.defaultView">
+                  <option value="detector">Power Detector</option>
+                  <option value="libraries">Libraries</option>
+                  <option value="ml">ML Trainer</option>
+                  <option value="tagging">Power Tagging</option>
+                  <option value="anomaly">Anomaly Detector</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>
+                  <input type="checkbox" v-model="settings.autoLoadData" />
+                  Auto-connect to Home Assistant on startup
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Home Assistant Settings -->
+          <div v-show="settingsTab === 'homeassistant'" class="settings-content">
+            <h2>Home Assistant Settings</h2>
+            <div v-if="!connected" class="info-banner">
+              ⚠️ Not connected to Home Assistant. Please enter your connection details below and click Reconnect.
+            </div>
+            <div class="settings-section">
+              <h3>Connection</h3>
+              <div class="form-group">
+                <label>Home Assistant URL:</label>
+                <input 
+                  v-model="settings.haUrl" 
+                  type="text" 
+                  placeholder="http://homeassistant.local:8123"
+                  @change="saveSettings"
+                />
+              </div>
+              <div class="form-group">
+                <label>Access Token:</label>
+                <input 
+                  v-model="settings.haToken" 
+                  type="password" 
+                  placeholder="Your long-lived access token"
+                  @change="saveSettings"
+                />
+              </div>
+              <div class="form-group">
+                <label>Power Entity ID:</label>
+                <input 
+                  v-model="settings.entityId" 
+                  type="text" 
+                  placeholder="sensor.power_consumption"
+                  @change="saveSettings"
+                />
+              </div>
+              <button @click="reconnect" class="btn-primary">
+                Reconnect
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Loading/Status -->
       <div v-if="loading" class="loading">Loading data...</div>
+      </div>
+      <!-- End main-area -->
     </div>
 
     <!-- Toast Notification -->
@@ -175,7 +299,14 @@ import TagManager from './TagManager.vue'
 import MLTrainer from './MLTrainer.vue'
 import PowerDetector from './PowerDetector.vue'
 import AnomalyDetector from './AnomalyDetector.vue'
+import LibraryManager from './LibraryManager.vue'
 import { connectToHA, fetchHistory, exportDay } from '../services/homeassistant'
+
+// Authentication state
+const authenticated = ref(false)
+const sessionToken = ref(localStorage.getItem('sessionToken') || '')
+const loginUsername = ref('')
+const loginPassword = ref('')
 
 // Connection state
 const connected = ref(false)
@@ -187,7 +318,40 @@ const error = ref('')
 const loading = ref(false)
 
 // Tab management
-const activeTab = ref('tagging')
+const activeTab = ref('detector')
+const settingsTab = ref('general')
+
+// Settings state
+const settings = ref({
+  defaultView: localStorage.getItem('defaultView') || 'detector',
+  autoLoadData: localStorage.getItem('autoLoadData') === 'true',
+  haUrl: localStorage.getItem('haUrl') || '',
+  haToken: localStorage.getItem('haToken') || '',
+  entityId: localStorage.getItem('entityId') || 'sensor.power_consumption'
+})
+
+// Sidebar state
+const sidebarCollapsed = ref(localStorage.getItem('sidebarCollapsed') === 'true')
+
+// Library pre-fill state
+const libraryPreFill = ref(null)
+
+const handleSendToLibrary = (modelData) => {
+  libraryPreFill.value = modelData
+  activeTab.value = 'libraries'
+}
+
+const handleModelImported = (data) => {
+  // Notify that a model was imported
+  if (data.hasModelFiles) {
+    console.log('Model imported with files, PowerDetector will refresh on next settings open')
+  }
+}
+
+const toggleSidebar = () => {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  localStorage.setItem('sidebarCollapsed', sidebarCollapsed.value)
+}
 
 // Toast notification state
 const toast = ref({
@@ -249,6 +413,91 @@ const saveTags = () => {
   localStorage.setItem('powerTags', JSON.stringify(tags.value))
 }
 
+// Login function
+const login = async () => {
+  error.value = ''
+  loading.value = true
+  
+  try {
+    const response = await fetch('http://localhost:3001/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: loginUsername.value,
+        password: loginPassword.value
+      })
+    })
+    
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.error || 'Login failed')
+    }
+    
+    const data = await response.json()
+    sessionToken.value = data.sessionToken
+    localStorage.setItem('sessionToken', data.sessionToken)
+    localStorage.setItem('loggedInUser', loginUsername.value)
+    
+    authenticated.value = true
+    console.log('✅ Login successful')
+    
+    // Load settings from server
+    if (data.settings) {
+      haUrl.value = data.settings.haUrl || ''
+      haToken.value = data.settings.haToken || ''
+      entityId.value = data.settings.entityId || 'sensor.power_consumption'
+      settings.value.haUrl = haUrl.value
+      settings.value.haToken = haToken.value
+      settings.value.entityId = entityId.value
+      
+      // Auto-connect to Home Assistant if enabled and configured
+      if (data.settings.autoConnect && haUrl.value && haToken.value) {
+        console.log('🔄 Auto-connecting to Home Assistant...')
+        await connect()
+      } else {
+        // Show settings tab if not auto-connecting
+        activeTab.value = 'settings'
+        settingsTab.value = 'homeassistant'
+      }
+    } else {
+      // No settings, show settings tab
+      activeTab.value = 'settings'
+      settingsTab.value = 'homeassistant'
+    }
+  } catch (err) {
+    error.value = err.message || 'Login failed'
+    console.error('Login error:', err)
+  } finally {
+    loading.value = false
+  }
+}
+
+// Logout function
+const logout = async () => {
+  try {
+    await fetch('http://localhost:3001/api/auth/logout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionToken: sessionToken.value })
+    })
+  } catch (err) {
+    console.error('Logout error:', err)
+  }
+  
+  // Clear local state
+  authenticated.value = false
+  connected.value = false
+  sessionToken.value = ''
+  localStorage.removeItem('sessionToken')
+  localStorage.removeItem('loggedInUser')
+  
+  // Clear form fields
+  loginUsername.value = ''
+  loginPassword.value = ''
+  
+  console.log('👋 Logged out')
+}
+
 // Connect to Home Assistant
 const connect = async () => {
   error.value = ''
@@ -265,6 +514,9 @@ const connect = async () => {
     localStorage.setItem('haUrl', haUrl.value)
     localStorage.setItem('haToken', haToken.value)
     localStorage.setItem('entityId', entityId.value)
+    
+    // Update settings on backend
+    await saveSettingsToBackend()
     
     // Load data
     await loadData()
@@ -741,6 +993,96 @@ const showToast = (message, type = 'success') => {
   }, 3000)
 }
 
+// Settings management
+const saveSettings = async () => {
+  localStorage.setItem('defaultView', settings.value.defaultView)
+  localStorage.setItem('autoLoadData', settings.value.autoLoadData)
+  localStorage.setItem('haUrl', settings.value.haUrl)
+  localStorage.setItem('haToken', settings.value.haToken)
+  localStorage.setItem('entityId', settings.value.entityId)
+  
+  // Save to backend
+  await saveSettingsToBackend()
+  showToast('Settings saved', 'success')
+}
+
+const saveSettingsToBackend = async () => {
+  try {
+    await fetch('http://localhost:3001/api/settings', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${sessionToken.value}`
+      },
+      body: JSON.stringify({
+        haUrl: settings.value.haUrl,
+        haToken: settings.value.haToken,
+        entityId: settings.value.entityId,
+        autoConnect: settings.value.autoLoadData
+      })
+    })
+  } catch (err) {
+    console.error('Failed to save settings to backend:', err)
+  }
+}
+
+const reconnect = async () => {
+  // Update connection values from settings
+  haUrl.value = settings.value.haUrl
+  haToken.value = settings.value.haToken
+  entityId.value = settings.value.entityId
+  
+  // Disconnect and reconnect
+  connected.value = false
+  await connect()
+}
+
+// Check for existing session on mount
+if (sessionToken.value) {
+  fetch('http://localhost:3001/api/auth/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionToken: sessionToken.value })
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.success) {
+      authenticated.value = true
+      loginUsername.value = localStorage.getItem('loggedInUser') || 'User'
+      // Load settings
+      if (data.settings) {
+        haUrl.value = data.settings.haUrl || ''
+        haToken.value = data.settings.haToken || ''
+        entityId.value = data.settings.entityId || 'sensor.power_consumption'
+        settings.value.haUrl = haUrl.value
+        settings.value.haToken = haToken.value
+        settings.value.entityId = entityId.value
+        
+        // Auto-connect if enabled
+        if (data.settings.autoConnect && haUrl.value && haToken.value) {
+          connect()
+        } else {
+          // Show settings tab if not auto-connecting
+          activeTab.value = 'settings'
+          settingsTab.value = 'homeassistant'
+        }
+      } else {
+        // No settings, show settings tab
+        activeTab.value = 'settings'
+        settingsTab.value = 'homeassistant'
+      }
+    } else {
+      // Invalid session
+      localStorage.removeItem('sessionToken')
+      sessionToken.value = ''
+    }
+  })
+  .catch(() => {
+    localStorage.removeItem('sessionToken')
+    sessionToken.value = ''
+  })
+}
+
 // Export current day data
 const exportCurrentDay = async () => {
   if (filteredTags.value.length === 0) {
@@ -771,6 +1113,31 @@ const exportCurrentDay = async () => {
   min-height: calc(100vh - 80px);
 }
 
+.login-panel {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.8) 0%, rgba(118, 75, 162, 0.8) 100%),
+              url('/background_login.png') center/cover no-repeat;
+  background-blend-mode: overlay;
+}
+
+.login-card {
+  background: rgba(120, 129, 217, 0.15);
+  padding: 3vh 2.5vw;
+  border-radius: 30px;
+  box-shadow: 0 4px 20px rgba(102, 126, 234, 0.3), 
+              0 8px 40px rgba(0, 0, 0, 0.12);
+  width: 22vw;
+  height: 33vh;
+  min-width: 280px;
+  max-width: 450px;
+  backdrop-filter: blur(15px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  margin-top: 2vh;
+}
+
 .config-panel {
   padding: 2rem;
   max-width: 500px;
@@ -783,50 +1150,93 @@ const exportCurrentDay = async () => {
   font-size: 1.25rem;
 }
 
-.form-group {
-  margin-bottom: 1.5rem;
+.floating-input {
+  position: relative;
+  margin-bottom: 1.8rem;
 }
 
-.form-group label {
-  display: block;
-  margin-bottom: 0.5rem;
-  font-weight: 500;
-  color: #555;
-}
-
-.form-group input {
+.floating-input input {
   width: 100%;
-  padding: 0.75rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+  padding: 1rem 0.75rem 0.5rem;
+  background: rgba(120, 129, 217, 0.25);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
   font-size: 1rem;
+  color: white;
+  transition: all 0.3s ease;
 }
 
-.form-group input:focus {
+.floating-input input::placeholder {
+  color: transparent;
+}
+
+.floating-input input:focus {
   outline: none;
-  border-color: #42b983;
+  background: rgba(120, 129, 217, 0.35);
+  border-color: rgba(255, 255, 255, 0.6);
 }
 
-button {
+.floating-input label {
+  position: absolute;
+  left: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 1rem;
+  transition: all 0.3s ease;
+  pointer-events: none;
+  background: transparent;
+}
+
+.floating-input input:focus + label,
+.floating-input input:not(:placeholder-shown) + label {
+  top: 0.4rem;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.9);
+  transform: translateY(0);
+}
+
+.login-btn {
   width: 100%;
-  padding: 0.75rem 1.5rem;
-  background: #42b983;
+  padding: 1rem 1.5rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   border: none;
-  border-radius: 4px;
-  font-size: 1rem;
+  border-radius: 8px;
+  font-size: 1.1rem;
   cursor: pointer;
-  font-weight: 500;
-  transition: background 0.3s;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+  margin-top: 0.5rem;
 }
 
-button:hover:not(:disabled) {
-  background: #35a372;
+.login-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+  transform: translateY(-2px);
 }
 
-button:disabled {
-  background: #ccc;
+.login-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.login-btn:disabled {
+  background: rgba(120, 129, 217, 0.3);
   cursor: not-allowed;
+  box-shadow: none;
+}
+
+.btn-icon {
+  font-size: 1.2rem;
+}
+
+.btn-text {
+  font-size: 1rem;
 }
 
 .error {
@@ -839,39 +1249,201 @@ button:disabled {
 }
 
 .viewer-container {
-  padding: 1.5rem;
-  max-width: 100%;
-}
-
-.tab-navigation {
   display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1.5rem;
-  border-bottom: 2px solid #e0e0e0;
+  max-width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
 }
 
-.tab-btn {
-  width: auto;
-  padding: 0.75rem 1.5rem;
+.viewer-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   background: transparent;
-  color: #666;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.viewer-container > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Sidebar Styles */
+.sidebar {
+  width: 250px;
+  background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  display: flex;
+  flex-direction: column;
+  transition: width 0.3s ease;
+  position: relative;
+  flex-shrink: 0;
+  box-shadow: 2px 0 15px rgba(102, 126, 234, 0.3);
+}
+
+.sidebar.collapsed {
+  width: 70px;
+}
+
+.sidebar-toggle {
+  width: 100%;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.2);
+  color: white;
   border: none;
-  border-bottom: 3px solid transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: pointer;
   font-size: 1rem;
-  font-weight: 600;
+  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.sidebar-toggle:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.toggle-text {
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.toggle-arrow {
+  font-size: 1.25rem;
+  font-weight: bold;
+}
+
+.toggle-icon {
+  font-size: 1.5rem;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.sidebar-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  border: none;
+  border-left: 3px solid transparent;
   cursor: pointer;
   transition: all 0.3s;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
-.tab-btn:hover {
-  color: #42b983;
-  background: rgba(66, 185, 131, 0.05);
+.sidebar-item:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
 }
 
-.tab-btn.active {
-  color: #42b983;
-  border-bottom-color: #42b983;
-  background: rgba(66, 185, 131, 0.1);
+.sidebar-item.active {
+  background: rgba(255, 255, 255, 0.25);
+  color: white;
+  border-left-color: #ffffff;
+}
+
+.sidebar-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+  width: 1.5rem;
+  text-align: center;
+}
+
+.sidebar-label {
+  font-size: 1rem;
+  font-weight: 500;
+  transition: opacity 0.3s;
+}
+
+.sidebar.collapsed .sidebar-label {
+  opacity: 0;
+  width: 0;
+  overflow: hidden;
+}
+
+.sidebar.collapsed .sidebar-item {
+  justify-content: center;
+  padding: 1rem 0.5rem;
+}
+
+.sidebar-logout {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  background: rgba(0, 0, 0, 0.2);
+  color: rgba(255, 255, 255, 0.9);
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition: all 0.3s;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  margin-top: auto;
+}
+
+.sidebar-logout:hover {
+  background: rgba(0, 0, 0, 0.3);
+  color: white;
+}
+
+.sidebar.collapsed .sidebar-logout {
+  justify-content: center;
+  padding: 1rem 0.5rem;
+}
+
+.sidebar.collapsed .sidebar-logout .sidebar-label {
+  opacity: 0;
+  width: 0;
+  overflow: hidden;
+}
+
+/* Main Content Area */
+.main-area {
+  flex: 1;
+  padding: 0;
+  overflow-y: auto;
+  background: url('/background_power.png') center/cover no-repeat fixed;
+  position: relative;
+}
+
+.main-area::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.45);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.main-area > * {
+  position: relative;
+  z-index: 1;
 }
 
 .tab-content {
@@ -893,8 +1465,11 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 1rem;
+  margin-bottom: 0;
+  padding: 0.5rem;
   gap: 1rem;
+  background: white;
+  border-bottom: 1px solid #e0e0e0;
 }
 
 .btn-export {
@@ -906,7 +1481,7 @@ button:disabled {
 }
 
 .btn-export:hover:not(:disabled) {
-  background: #218838;
+  background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
 }
 
 .btn-export:disabled {
@@ -922,7 +1497,7 @@ button:disabled {
 
 .current-date {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   gap: 0.5rem;
 }
@@ -962,7 +1537,7 @@ button:disabled {
 
 .statistics-section {
   margin-top: 1.5rem;
-  padding: 1.5rem;
+  padding: 0.5rem;
   background: white;
   border-radius: 8px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.05);
@@ -992,9 +1567,9 @@ button:disabled {
   flex-direction: column;
   gap: 0.5rem;
   padding: 1rem;
-  background: #f8f9fa;
+  background: rgba(120, 129, 217, 0.08);
   border-radius: 8px;
-  border-left: 4px solid #42b983;
+  border-left: 4px solid #667eea;
 }
 
 .stat-label {
@@ -1006,7 +1581,7 @@ button:disabled {
 .stat-value {
   font-size: 1.75rem;
   font-weight: 700;
-  color: #42b983;
+  color: #667eea;
 }
 
 .label-breakdown {
@@ -1040,7 +1615,7 @@ button:disabled {
 }
 
 .count-badge {
-  background: #42b983;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   padding: 0.25rem 0.75rem;
   border-radius: 12px;
@@ -1057,6 +1632,7 @@ button:disabled {
   font-style: italic;
 }
 
+/* Responsive Styles */
 @media (max-width: 1200px) {
   .main-content {
     grid-template-columns: 1fr;
@@ -1068,16 +1644,62 @@ button:disabled {
 }
 
 @media (max-width: 768px) {
+  .viewer-container {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100% !important;
+    height: auto;
+    flex-direction: row;
+  }
+
+  .sidebar.collapsed {
+    width: 100% !important;
+  }
+
+  .sidebar-toggle {
+    display: none;
+  }
+
+  .sidebar-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0;
+  }
+
+  .sidebar-item {
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.75rem 1rem;
+    min-width: 80px;
+  }
+
+  .sidebar.collapsed .sidebar-label {
+    opacity: 1;
+    width: auto;
+  }
+
+  .sidebar-label {
+    font-size: 0.75rem;
+    white-space: nowrap;
+  }
+
+  .sidebar-icon {
+    font-size: 1.25rem;
+  }
+
+  .main-area {
+    padding: 1rem;
+  }
+
   .date-navigation {
     flex-direction: column;
   }
   
   .nav-btn {
     width: 100%;
-  }
-  
-  .viewer-container {
-    padding: 1rem;
   }
 }
 
@@ -1099,7 +1721,7 @@ button:disabled {
 }
 
 .toast.success {
-  background: #42b983;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
 }
 
@@ -1152,6 +1774,124 @@ button:disabled {
   to {
     transform: translateX(100%);
     opacity: 0;
+  }
+}
+
+/* Settings Styles */
+.settings-container {
+  padding: 2rem;
+  max-width: 800px;
+}
+
+.settings-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 2rem;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+.settings-tab-btn {
+  padding: 0.75rem 1.5rem;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+  font-size: 1rem;
+  color: #666;
+  transition: all 0.2s;
+}
+
+.settings-tab-btn:hover {
+  color: #667eea;
+  background: rgba(120, 129, 217, 0.08);
+}
+
+.settings-tab-btn.active {
+  color: #667eea;
+  border-bottom-color: #667eea;
+  font-weight: 600;
+}
+
+.settings-content {
+  animation: fadeIn 0.3s;
+}
+
+.settings-content h2 {
+  margin-bottom: 1.5rem;
+  color: #2c3e50;
+}
+
+.info-banner {
+  padding: 1rem;
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 6px;
+  color: #856404;
+  margin-bottom: 1.5rem;
+  font-size: 0.95rem;
+}
+
+.settings-section {
+  margin-bottom: 2rem;
+}
+
+.settings-section h3 {
+  margin-bottom: 1rem;
+  color: #666;
+  font-size: 1.1rem;
+}
+
+.settings-content .form-group {
+  margin-bottom: 1.5rem;
+}
+
+.settings-content .form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: #666;
+  font-weight: 500;
+}
+
+.settings-content .form-group input[type="text"],
+.settings-content .form-group input[type="password"],
+.settings-content .form-group select {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+
+.settings-content .form-group input[type="checkbox"] {
+  margin-right: 0.5rem;
+  cursor: pointer;
+}
+
+.settings-content .btn-primary {
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.3s ease;
+}
+
+.settings-content .btn-primary:hover {
+  background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 </style>

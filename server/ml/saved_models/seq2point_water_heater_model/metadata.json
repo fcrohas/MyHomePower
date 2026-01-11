@@ -1,146 +1,115 @@
 {
+  "id": "seq2point_water_heater_model",
+  "name": "MSDC SP2On Water heater",
   "appliance": "water heater",
   "windowLength": 599,
-  "epochs": 30,
-  "batchSize": 128,
-  "trainSamples": 278410,
-  "valSamples": 14654,
   "mainsStats": {
-    "mean": 872.2636114186685,
-    "std": 921.9043652581381
+    "mean": 875.2710651446503,
+    "std": 919.650201664145
   },
   "applianceStats": {
-    "mean": 140.60046189376445,
-    "std": 649.1184424686983,
-    "onPowerThreshold": 5,
-    "maxOnPower": 5980
+    "mean": 139.45306749447948,
+    "std": 646.8478841761862,
+    "onPowerThreshold": 10,
+    "maxOnPower": 5990
   },
-  "trainTime": 14477.203,
-  "samplesPerDay": [
+  "createdAt": "2025-12-29T22:33:09.126Z",
+  "trainedAt": "2025-12-29T22:33:09.127Z",
+  "trainingHistory": [
     {
-      "date": "2025-11-08",
-      "samples": 8892
+      "epoch": 1,
+      "loss": 0.19265708327293396,
+      "mae": 0,
+      "valLoss": 0.07239288091659546,
+      "valMae": 0,
+      "stoppedEarly": false
     },
     {
-      "date": "2025-11-09",
-      "samples": 8899
+      "epoch": 2,
+      "loss": 0.07109465450048447,
+      "mae": 0,
+      "valLoss": 0.048323359340429306,
+      "valMae": 0,
+      "stoppedEarly": false
     },
     {
-      "date": "2025-11-10",
-      "samples": 9317
+      "epoch": 3,
+      "loss": 0.04787101596593857,
+      "mae": 0,
+      "valLoss": 0.03131495788693428,
+      "valMae": 0,
+      "stoppedEarly": false
     },
     {
-      "date": "2025-11-11",
-      "samples": 10711
+      "epoch": 4,
+      "loss": 0.03544510528445244,
+      "mae": 0,
+      "valLoss": 0.022040531039237976,
+      "valMae": 0,
+      "stoppedEarly": false
     },
     {
-      "date": "2025-11-12",
-      "samples": 8595
+      "epoch": 5,
+      "loss": 0.026936691254377365,
+      "mae": 0,
+      "valLoss": 0.015106315724551678,
+      "valMae": 0,
+      "stoppedEarly": false
     },
     {
-      "date": "2025-11-13",
-      "samples": 8864
+      "epoch": 6,
+      "loss": 0.021458879113197327,
+      "mae": 0,
+      "valLoss": 0.01127736084163189,
+      "valMae": 0,
+      "stoppedEarly": false
     },
     {
-      "date": "2025-11-14",
-      "samples": 7175
+      "epoch": 7,
+      "loss": 0.017934022471308708,
+      "mae": 0,
+      "valLoss": 0.010238602757453918,
+      "valMae": 0,
+      "stoppedEarly": false
     },
     {
-      "date": "2025-11-15",
-      "samples": 8241
+      "epoch": 8,
+      "loss": 0.015348810702562332,
+      "mae": 0,
+      "valLoss": 0.013358049094676971,
+      "valMae": 0,
+      "stoppedEarly": false
     },
     {
-      "date": "2025-11-16",
-      "samples": 8942
+      "epoch": 9,
+      "loss": 0.012576951645314693,
+      "mae": 0,
+      "valLoss": 0.016965478658676147,
+      "valMae": 0,
+      "stoppedEarly": false
     },
     {
-      "date": "2025-11-17",
-      "samples": 8378
-    },
-    {
-      "date": "2025-11-18",
-      "samples": 9873
-    },
-    {
-      "date": "2025-11-19",
-      "samples": 8582
-    },
-    {
-      "date": "2025-11-20",
-      "samples": 9324
-    },
-    {
-      "date": "2025-11-21",
-      "samples": 9214
-    },
-    {
-      "date": "2025-11-22",
-      "samples": 8903
-    },
-    {
-      "date": "2025-11-23",
-      "samples": 8831
-    },
-    {
-      "date": "2025-11-24",
-      "samples": 8806
-    },
-    {
-      "date": "2025-11-25",
-      "samples": 11026
-    },
-    {
-      "date": "2025-11-26",
-      "samples": 10256
-    },
-    {
-      "date": "2025-11-27",
-      "samples": 10407
-    },
-    {
-      "date": "2025-11-28",
-      "samples": 9068
-    },
-    {
-      "date": "2025-11-29",
-      "samples": 10505
-    },
-    {
-      "date": "2025-11-30",
-      "samples": 10744
-    },
-    {
-      "date": "2025-12-01",
-      "samples": 9417
-    },
-    {
-      "date": "2025-12-02",
-      "samples": 10693
-    },
-    {
-      "date": "2025-12-03",
-      "samples": 9637
-    },
-    {
-      "date": "2025-12-04",
-      "samples": 10541
-    },
-    {
-      "date": "2025-12-05",
-      "samples": 10320
-    },
-    {
-      "date": "2025-12-06",
-      "samples": 10183
-    },
-    {
-      "date": "2025-12-07",
-      "samples": 9993
-    },
-    {
-      "date": "2025-12-16",
-      "samples": 8727
+      "epoch": 10,
+      "loss": 0.0111191151663661,
+      "mae": 0,
+      "valLoss": 0.012809865176677704,
+      "valMae": 0,
+      "stoppedEarly": false
     }
   ],
-  "createdAt": "2025-12-18T11:23:11.591Z"
+  "datasetInfo": {
+    "totalSamples": 293774,
+    "trainSamples": 279085,
+    "valSamples": 14689
+  },
+  "finalMetrics": {
+    "loss": 0.0111191151663661,
+    "mae": 0,
+    "valLoss": 0.012809865176677704,
+    "valMae": 0
+  },
+  "modelType": "seq2point",
+  "trainSamples": 279085,
+  "valSamples": 14689,
+  "valMAE": 0
 }

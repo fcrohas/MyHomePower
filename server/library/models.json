@@ -1,0 +1,39 @@
+{
+  "models": [
+    {
+      "id": "1767823915851",
+      "name": "Seq2Point climate",
+      "description": "Trained model for climate",
+      "deviceType": "air_conditioner",
+      "manufacturer": "Daikin",
+      "modelNumber": "FBA71",
+      "properties": {
+        "powerMin": 300,
+        "powerMax": 4000,
+        "hasOnOff": true,
+        "annualPowerWh": 0
+      },
+      "hasTrainedModel": true,
+      "createdAt": "2026-01-07T22:11:55.851Z",
+      "updatedAt": "2026-01-07T22:11:55.851Z",
+      "linkedApplianceName": "climate"
+    },
+    {
+      "id": "1768039129358",
+      "name": "Water heater",
+      "description": "Chauffe eau 300L atlantic",
+      "deviceType": "water_heater",
+      "manufacturer": "Atlantic",
+      "modelNumber": "CF300",
+      "properties": {
+        "powerMin": 0,
+        "powerMax": 3000,
+        "hasOnOff": true,
+        "annualPowerWh": 0
+      },
+      "hasTrainedModel": false,
+      "createdAt": "2026-01-10T09:58:49.358Z",
+      "updatedAt": "2026-01-10T09:58:49.358Z"
+    }
+  ]
+}

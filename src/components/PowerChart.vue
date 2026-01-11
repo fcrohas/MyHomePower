@@ -227,6 +227,7 @@ const createChart = () => {
     options: {
       responsive: true,
       maintainAspectRatio: true,
+      animation: false,
       aspectRatio: 2.5,
       interaction: {
         mode: 'index',
@@ -238,7 +239,6 @@ const createChart = () => {
           position: 'top'
         },
         tooltip: {
-          enabled: true,
           callbacks: {
             title: (items) => {
               const date = new Date(items[0].parsed.x)

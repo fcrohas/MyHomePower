@@ -1,8 +1,5 @@
 <template>
   <div id="app">
-    <header>
-      <h1>Power Consumption Viewer</h1>
-    </header>
     <main>
       <PowerViewer />
     </main>
@@ -27,18 +24,6 @@ import PowerViewer from './components/PowerViewer.vue'
   color: #2c3e50;
   min-height: 100vh;
   background: white;
-}
-
-header {
-  background: #42b983;
-  color: white;
-  padding: 0.75rem 1.5rem;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-header h1 {
-  font-size: 1.25rem;
-  font-weight: 600;
 }
 
 main {

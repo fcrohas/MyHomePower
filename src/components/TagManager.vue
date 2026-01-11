@@ -87,48 +87,7 @@
       </div>
     </div>
 
-    <!-- Model Subtraction Section -->
-    <div class="model-subtraction" v-if="availableModels.length > 0 || subtractedModels.length > 0">
-      <h3>Subtract Trained Models</h3>
-      <p class="model-hint">Subtract predictions from seq2point trained models (like virtual sensors)</p>
-      
-      <div v-if="loadingModels" class="loading-hint">Loading models...</div>
-      <div v-else-if="availableModels.length === 0 && subtractedModels.length === 0" class="model-hint">
-        No trained models found. Train models using: <code>node server/ml/seq2point-train.js "appliance_name"</code>
-      </div>
-      <div v-else class="form-group">
-        <label>Add model to subtract:</label>
-        <select v-model="selectedModelToAdd" @change="addModelToSubtract">
-          <option value="">-- Select a model --</option>
-          <option 
-            v-for="model in availableModels" 
-            :key="model"
-            :value="model"
-            :disabled="subtractedModels.some(m => m === model)"
-          >
-            {{ model }}
-          </option>
-        </select>
-      </div>
-      
-      <div v-if="subtractedModels.length > 0" class="subtracted-models-list">
-        <h4>Active Model Subtractions ({{ subtractedModels.length }})</h4>
-        <div 
-          v-for="model in subtractedModels" 
-          :key="model"
-          class="model-item"
-        >
-          <span class="model-name">{{ model }}</span>
-          <button 
-            @click="removeModelSubtraction(model)"
-            class="btn-remove"
-            title="Remove subtraction"
-          >
-            ✕
-          </button>
-        </div>
-      </div>
-    </div>
+
     
     <div class="sticky-header">
       <div class="header-row">
@@ -195,53 +154,113 @@
     <div v-if="showSettings" class="dialog-overlay" @click.self="showSettings = false">
       <div class="dialog-content">
         <div class="dialog-header">
-          <h3>Sensor Settings</h3>
+          <h3>Settings</h3>
           <button @click="showSettings = false" class="btn-close">✕</button>
         </div>
         
+        <!-- Tab Navigation -->
+        <div class="dialog-tabs">
+          <button 
+            :class="['tab-button', { active: activeSettingsTab === 'sensors' }]"
+            @click="activeSettingsTab = 'sensors'"
+          >
+            Subtract Sensors
+          </button>
+          <button 
+            :class="['tab-button', { active: activeSettingsTab === 'models' }]"
+            @click="activeSettingsTab = 'models'"
+          >
+            Subtract Models
+          </button>
+        </div>
+        
         <div class="dialog-body">
-          <p class="info-text">
-            Select power sensors from your Home Assistant to subtract their consumption 
-            from the main chart. This helps identify remaining/unaccounted power usage.
-          </p>
-          
-          <div v-if="loadingSensors" class="loading-state">
-            Loading sensors...
-          </div>
-          
-          <div v-else-if="sensorError" class="error-state">
-            {{ sensorError }}
-          </div>
-          
-          <div v-else-if="powerSensors.length === 0" class="empty-state">
-            No power sensors found in Home Assistant.
-          </div>
-          
-          <div v-else class="sensors-list">
-            <h4>Available Power Sensors ({{ powerSensors.length }})</h4>
-            <div class="sensor-grid">
-              <div 
-                v-for="sensor in powerSensors" 
-                :key="sensor.entity_id"
-                class="sensor-card"
-                :class="{ 'sensor-selected': selectedSensors.has(sensor.entity_id) }"
-                @click="toggleSensorSelection(sensor.entity_id)"
-              >
-                <div class="sensor-checkbox">
-                  <input 
-                    type="checkbox" 
-                    :checked="selectedSensors.has(sensor.entity_id)"
-                    @change="toggleSensorSelection(sensor.entity_id)"
-                    @click.stop
-                  />
-                </div>
-                <div class="sensor-details">
-                  <div class="sensor-friendly-name">
-                    {{ sensor.friendly_name || sensor.entity_id }}
+          <!-- Sensors Tab -->
+          <div v-show="activeSettingsTab === 'sensors'" class="tab-content">
+            <p class="info-text">
+              Select power sensors from your Home Assistant to subtract their consumption 
+              from the main chart. This helps identify remaining/unaccounted power usage.
+            </p>
+            
+            <div v-if="loadingSensors" class="loading-state">
+              Loading sensors...
+            </div>
+            
+            <div v-else-if="sensorError" class="error-state">
+              {{ sensorError }}
+            </div>
+            
+            <div v-else-if="powerSensors.length === 0" class="empty-state">
+              No power sensors found in Home Assistant.
+            </div>
+            
+            <div v-else class="sensors-list">
+              <h4>Available Power Sensors ({{ powerSensors.length }})</h4>
+              <div class="sensor-grid">
+                <div 
+                  v-for="sensor in powerSensors" 
+                  :key="sensor.entity_id"
+                  class="sensor-card"
+                  :class="{ 'sensor-selected': selectedSensors.has(sensor.entity_id) }"
+                  @click="toggleSensorSelection(sensor.entity_id)"
+                >
+                  <div class="sensor-checkbox">
+                    <input 
+                      type="checkbox" 
+                      :checked="selectedSensors.has(sensor.entity_id)"
+                      @change="toggleSensorSelection(sensor.entity_id)"
+                      @click.stop
+                    />
                   </div>
-                  <div class="sensor-entity-id">{{ sensor.entity_id }}</div>
-                  <div class="sensor-state" v-if="sensor.state">
-                    Current: {{ parseFloat(sensor.state).toFixed(1) }} W
+                  <div class="sensor-details">
+                    <div class="sensor-friendly-name">
+                      {{ sensor.friendly_name || sensor.entity_id }}
+                    </div>
+                    <div class="sensor-entity-id">{{ sensor.entity_id }}</div>
+                    <div class="sensor-state" v-if="sensor.state">
+                      Current: {{ parseFloat(sensor.state).toFixed(1) }} W
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Models Tab -->
+          <div v-show="activeSettingsTab === 'models'" class="tab-content">
+            <p class="info-text">
+              Subtract predictions from seq2point trained models (like virtual sensors).
+              This removes the predicted consumption from trained models to see remaining power.
+            </p>
+            
+            <div v-if="loadingModels" class="loading-state">
+              Loading models...
+            </div>
+            
+            <div v-else-if="availableModels.length === 0" class="empty-state">
+              No trained models found. Train models using: <code>node server/ml/seq2point-train.js "appliance_name"</code>
+            </div>
+            
+            <div v-else class="models-list">
+              <h4>Available Trained Models ({{ availableModels.length }})</h4>
+              <div class="model-grid">
+                <div 
+                  v-for="model in availableModels" 
+                  :key="model"
+                  class="model-card"
+                  :class="{ 'model-selected': selectedModels.has(model) }"
+                  @click="toggleModelSelection(model)"
+                >
+                  <div class="model-checkbox">
+                    <input 
+                      type="checkbox" 
+                      :checked="selectedModels.has(model)"
+                      @change="toggleModelSelection(model)"
+                      @click.stop
+                    />
+                  </div>
+                  <div class="model-details">
+                    <div class="model-name">{{ model }}</div>
                   </div>
                 </div>
               </div>
@@ -250,8 +269,8 @@
         </div>
         
         <div class="dialog-footer">
-          <button @click="applySelectedSensors" class="btn-primary">
-            Apply Selection ({{ selectedSensorsCount }} selected)
+          <button @click="applySettings" class="btn-primary">
+            Apply Settings
           </button>
           <button @click="showSettings = false" class="btn-secondary">
             Cancel
@@ -312,6 +331,7 @@ const isExpanded = ref(false)
 
 // Settings dialog
 const showSettings = ref(false)
+const activeSettingsTab = ref('sensors')
 const loadingSensors = ref(false)
 const sensorError = ref('')
 const powerSensors = ref([])
@@ -323,6 +343,7 @@ const selectedSensorToAdd = ref('')
 // Model subtraction state
 const availableModels = ref([])
 const subtractedModels = ref([])
+const selectedModels = ref(new Set())
 const selectedModelToAdd = ref('')
 const loadingModels = ref(false)
 
@@ -523,25 +544,41 @@ const toggleSensorSelection = (entityId) => {
   selectedSensors.value = newSet
 }
 
-// Apply selected sensors
-const applySelectedSensors = () => {
+// Toggle model selection
+const toggleModelSelection = (modelName) => {
+  const newSet = new Set(selectedModels.value)
+  if (newSet.has(modelName)) {
+    newSet.delete(modelName)
+  } else {
+    newSet.add(modelName)
+  }
+  selectedModels.value = newSet
+}
+
+// Apply settings (both sensors and models)
+const applySettings = () => {
+  // Apply sensor selections
   availableSensors.value = powerSensors.value.filter(sensor => 
     selectedSensors.value.has(sensor.entity_id)
   )
   
   console.log('Applied sensors:', availableSensors.value.map(s => s.entity_id))
-  
-  // Save to localStorage
   localStorage.setItem('availableSensors', JSON.stringify(availableSensors.value))
+  
+  // Update subtracted sensors list
+  subtractedSensors.value = availableSensors.value
+  localStorage.setItem('subtractedSensors', JSON.stringify(subtractedSensors.value))
+  
+  // Apply model selections
+  subtractedModels.value = Array.from(selectedModels.value)
+  console.log('Applied models:', subtractedModels.value)
+  localStorage.setItem('subtractedModels', JSON.stringify(subtractedModels.value))
   
   showSettings.value = false
   
-  // If there are subtracted sensors, re-emit them
-  if (subtractedSensors.value.length > 0) {
-    const ids = subtractedSensors.value.map(s => s.entity_id)
-    console.log('Re-emitting subtracted sensors after apply:', ids)
-    emit('sensors-changed', ids)
-  }
+  // Emit changes
+  emit('sensors-changed', subtractedSensors.value.map(s => s.entity_id))
+  emit('models-changed', subtractedModels.value)
 }
 
 // Add sensor to subtract
@@ -622,12 +659,20 @@ const fetchAndSubtractSensorData = async (entityId) => {
 watch(showSettings, async (newValue) => {
   if (newValue) {
     await loadPowerSensors()
+    await loadAvailableModels()
     
     // Load previously selected sensors from localStorage
     const stored = localStorage.getItem('availableSensors')
     if (stored) {
       const savedSensors = JSON.parse(stored)
       selectedSensors.value = new Set(savedSensors.map(s => s.entity_id))
+    }
+    
+    // Load previously selected models from localStorage
+    const storedModels = localStorage.getItem('subtractedModels')
+    if (storedModels) {
+      const savedModels = JSON.parse(storedModels)
+      selectedModels.value = new Set(savedModels)
     }
   }
 })
@@ -1071,71 +1116,6 @@ onMounted(() => {
   border: 1px solid #b8daff;
 }
 
-.model-subtraction {
-  background: #f0fff4;
-  padding: 1rem;
-  border-radius: 8px;
-  margin: 0 1rem 1rem 1rem;
-  border: 1px solid #a7f3d0;
-}
-
-.model-subtraction h3 {
-  margin: 0 0 0.5rem 0;
-  color: #2c3e50;
-  font-size: 1.1rem;
-}
-
-.model-hint {
-  font-size: 0.85rem;
-  color: #666;
-  margin: 0 0 0.75rem 0;
-  font-style: italic;
-}
-
-.loading-hint {
-  font-size: 0.9rem;
-  color: #888;
-  padding: 0.5rem;
-  text-align: center;
-  font-style: italic;
-}
-
-.model-hint code {
-  background: #f5f5f5;
-  padding: 0.2rem 0.4rem;
-  border-radius: 3px;
-  font-size: 0.8rem;
-  color: #c7254e;
-  font-family: monospace;
-}
-
-.subtracted-models-list {
-  margin-top: 1rem;
-}
-
-.subtracted-models-list h4 {
-  color: #2c3e50;
-  font-size: 0.9rem;
-  margin-bottom: 0.5rem;
-}
-
-.model-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.75rem;
-  background: white;
-  border-radius: 4px;
-  margin-bottom: 0.5rem;
-  border: 1px solid #ddd;
-}
-
-.model-name {
-  font-weight: 500;
-  color: #2c3e50;
-  text-transform: capitalize;
-}
-
 .subtracted-sensors-list {
   margin-top: 1rem;
 }
@@ -1230,6 +1210,52 @@ onMounted(() => {
   color: #333;
 }
 
+/* Dialog Tabs */
+.dialog-tabs {
+  display: flex;
+  border-bottom: 1px solid #ddd;
+  background: #f8f9fa;
+}
+
+.tab-button {
+  flex: 1;
+  padding: 1rem;
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 500;
+  color: #666;
+  transition: all 0.3s;
+}
+
+.tab-button:hover {
+  background: rgba(66, 185, 131, 0.1);
+  color: #42b983;
+}
+
+.tab-button.active {
+  color: #42b983;
+  border-bottom-color: #42b983;
+  background: white;
+}
+
+.tab-content {
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .dialog-body {
   padding: 1.5rem;
   overflow-y: auto;
@@ -1243,7 +1269,8 @@ onMounted(() => {
 }
 
 .loading-state,
-.error-state {
+.error-state,
+.empty-state {
   text-align: center;
   padding: 2rem;
   color: #666;
@@ -1253,12 +1280,27 @@ onMounted(() => {
   color: #dc3545;
 }
 
+.empty-state code {
+  background: #f5f5f5;
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.85rem;
+  color: #c7254e;
+  font-family: monospace;
+}
+
 .sensors-list h4 {
   color: #2c3e50;
   margin-bottom: 1rem;
 }
 
-.sensor-grid {
+.models-list h4 {
+  color: #2c3e50;
+  margin-bottom: 1rem;
+}
+
+.sensor-grid,
+.model-grid {
   display: grid;
   gap: 0.75rem;
   max-height: 400px;
@@ -1266,7 +1308,8 @@ onMounted(() => {
   padding-right: 0.5rem;
 }
 
-.sensor-card {
+.sensor-card,
+.model-card {
   display: flex;
   align-items: center;
   gap: 1rem;
@@ -1277,23 +1320,27 @@ onMounted(() => {
   transition: all 0.2s;
 }
 
-.sensor-card:hover {
+.sensor-card:hover,
+.model-card:hover {
   border-color: #42b983;
   background: #f8f9fa;
 }
 
-.sensor-card.sensor-selected {
+.sensor-card.sensor-selected,
+.model-card.model-selected {
   border-color: #42b983;
   background: #e8f5e9;
 }
 
-.sensor-checkbox input[type="checkbox"] {
+.sensor-checkbox input[type="checkbox"],
+.model-checkbox input[type="checkbox"] {
   width: 18px;
   height: 18px;
   cursor: pointer;
 }
 
-.sensor-details {
+.sensor-details,
+.model-details {
   flex: 1;
 }
 
@@ -1301,6 +1348,13 @@ onMounted(() => {
   font-weight: 600;
   color: #2c3e50;
   margin-bottom: 0.25rem;
+}
+
+.model-name {
+  font-weight: 600;
+  color: #2c3e50;
+  text-transform: capitalize;
+  font-size: 1rem;
 }
 
 .sensor-entity-id {

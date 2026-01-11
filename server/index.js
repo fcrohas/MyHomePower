@@ -5,8 +5,10 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
+import archiver from 'archiver'
 import tf from './ml/tf-provider.js'
 import { PowerTagPredictor } from './ml/model.js'
+import { MSDCPredictor } from './ml/model-msdc.js'
 import { SlidingWindowPredictor } from './ml/slidingWindowPredictor.js'
 import { PowerAutoencoder } from './ml/autoencoder.js'
 import { loadAllData, prepareTrainingData, createTensors, preparePredictionInput } from './ml/dataPreprocessing.js'
@@ -36,6 +38,53 @@ if (fs.existsSync(distPath)) {
 
 // Store HA connection info (in production, use a proper session management)
 let haConnections = new Map()
+let activeSessions = new Map() // Store authenticated user sessions
+
+// Load settings from settings.json
+let appSettings = {
+  haUrl: '',
+  haToken: '',
+  entityId: 'sensor.power_consumption',
+  autoConnect: false
+}
+
+const settingsPath = path.join(__dirname, '..', 'settings.json')
+if (fs.existsSync(settingsPath)) {
+  try {
+    appSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
+    console.log('📋 Loaded settings from settings.json')
+  } catch (err) {
+    console.error('⚠️ Failed to load settings:', err)
+  }
+}
+
+// Save settings function
+function saveSettings() {
+  try {
+    fs.writeFileSync(settingsPath, JSON.stringify(appSettings, null, 2))
+    console.log('💾 Settings saved')
+  } catch (err) {
+    console.error('⚠️ Failed to save settings:', err)
+  }
+}
+
+// Model selection: 'PowerTagPredictor' or 'MSDCPredictor'
+// Can be set via environment variable MODEL_TYPE or changed here
+const MODEL_TYPE = process.env.MODEL_TYPE || 'PowerTagPredictor'
+const MSDC_ARCHITECTURE = process.env.MSDC_ARCHITECTURE || 'S2P_on' // S2P_on, S2P_State, S2P_State2
+const MSDC_LITE = process.env.MSDC_LITE === 'true' || false // Use lite version (50% fewer filters, 50% smaller dense layers)
+
+// Factory function to create the appropriate model
+function createModel() {
+  const liteInfo = (MODEL_TYPE === 'MSDCPredictor' && MSDC_LITE) ? ' [LITE]' : ''
+  console.log(`🔧 Creating model: ${MODEL_TYPE}${MODEL_TYPE === 'MSDCPredictor' ? ` (${MSDC_ARCHITECTURE})` : ''}${liteInfo}`)
+  
+  if (MODEL_TYPE === 'MSDCPredictor') {
+    return new MSDCPredictor()
+  } else {
+    return new PowerTagPredictor()
+  }
+}
 
 // ML model instance and training state
 let mlModel = null
@@ -63,6 +112,98 @@ let autoencoderTraining = new Map() // Map of tag -> training status
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Power Viewer API is running' })
+})
+
+// Get current model configuration
+app.get('/api/model/info', (req, res) => {
+  res.json({
+    modelType: MODEL_TYPE,
+    architecture: MODEL_TYPE === 'MSDCPredictor' ? MSDC_ARCHITECTURE : 'seq2point',
+    isLoaded: mlModel !== null,
+    availableModels: [
+      { type: 'PowerTagPredictor', description: 'Conv2D-based seq2point model' },
+      { type: 'MSDCPredictor', architectures: ['S2P_on', 'S2P_State', 'S2P_State2'], description: 'Conv1D-based multi-scale NILM' }
+    ]
+  })
+})
+
+// Login endpoint
+app.post('/api/auth/login', (req, res) => {
+  const { username, password } = req.body
+
+  const validUsername = process.env.APP_USERNAME || 'admin'
+  const validPassword = process.env.APP_PASSWORD || 'admin'
+
+  if (username === validUsername && password === validPassword) {
+    const sessionToken = Date.now().toString() + Math.random().toString(36).substring(7)
+    activeSessions.set(sessionToken, { username, loginTime: new Date() })
+    
+    console.log(`✅ User logged in: ${username}`)
+    
+    res.json({ 
+      success: true, 
+      sessionToken,
+      settings: appSettings
+    })
+  } else {
+    console.log(`❌ Login failed for user: ${username}`)
+    res.status(401).json({ error: 'Invalid credentials' })
+  }
+})
+
+// Logout endpoint
+app.post('/api/auth/logout', (req, res) => {
+  const { sessionToken } = req.body
+  if (sessionToken) {
+    activeSessions.delete(sessionToken)
+    console.log('👋 User logged out')
+  }
+  res.json({ success: true })
+})
+
+// Verify session endpoint
+app.post('/api/auth/verify', (req, res) => {
+  const { sessionToken } = req.body
+  
+  if (!sessionToken || !activeSessions.has(sessionToken)) {
+    return res.status(401).json({ error: 'Invalid session' })
+  }
+  
+  res.json({ 
+    success: true,
+    settings: appSettings
+  })
+})
+
+// Get settings endpoint
+app.get('/api/settings', (req, res) => {
+  const sessionToken = req.headers.authorization?.replace('Bearer ', '')
+  
+  if (!sessionToken || !activeSessions.has(sessionToken)) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  
+  res.json(appSettings)
+})
+
+// Update settings endpoint
+app.post('/api/settings', (req, res) => {
+  const sessionToken = req.headers.authorization?.replace('Bearer ', '')
+  
+  if (!sessionToken || !activeSessions.has(sessionToken)) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  
+  const { haUrl, haToken, entityId, autoConnect } = req.body
+  
+  if (haUrl !== undefined) appSettings.haUrl = haUrl
+  if (haToken !== undefined) appSettings.haToken = haToken
+  if (entityId !== undefined) appSettings.entityId = entityId
+  if (autoConnect !== undefined) appSettings.autoConnect = autoConnect
+  
+  saveSettings()
+  
+  res.json({ success: true, settings: appSettings })
 })
 
 // Test Home Assistant connection
@@ -737,11 +878,23 @@ app.post('/api/ml/train', async (req, res) => {
         console.log(`   Early stopping: enabled (patience=${patience || 5}, minDelta=${minDelta || 0.0001})`)
       }
 
+      // Set up SSE for streaming training progress
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      })
+
+      // Send initial log
+      res.write(`data: ${JSON.stringify({ log: 'info', message: 'Starting data preparation...' })}\n\n`)
+
       // Import seq2point preprocessing
       const { prepareSeq2PointDataset } = await import('./ml/seq2pointPreprocessing.js')
       
       // Load and prepare data
       const dataDir = path.join(__dirname, '..', 'data')
+      res.write(`data: ${JSON.stringify({ log: 'info', message: `Loading data for appliance: ${appliance}` })}\n\n`)
+      
       const dataset = await prepareSeq2PointDataset(
         dataDir,
         appliance,
@@ -762,16 +915,30 @@ app.post('/api/ml/train', async (req, res) => {
       console.log(`   Mains stats: mean=${dataset.mainsStats.mean.toFixed(2)}, std=${dataset.mainsStats.std.toFixed(2)}`)
       console.log(`   Appliance stats: mean=${dataset.applianceStats.mean.toFixed(2)}, std=${dataset.applianceStats.std.toFixed(2)}`)
 
-      // Build seq2point model
-      mlModel = new PowerTagPredictor()
-      mlModel.buildModel(windowLength || 599, 1) // seq2point: single output for regression
+      // Send dataset preparation logs to frontend
+      res.write(`data: ${JSON.stringify({ 
+        log: 'success', 
+        message: `Dataset prepared: ${dataset.xTrain.shape[0]} training samples, ${dataset.xVal.shape[0]} validation samples` 
+      })}\n\n`)
+      res.write(`data: ${JSON.stringify({ 
+        log: 'info', 
+        message: `Mains stats: mean=${dataset.mainsStats.mean.toFixed(2)}, std=${dataset.mainsStats.std.toFixed(2)}` 
+      })}\n\n`)
+      res.write(`data: ${JSON.stringify({ 
+        log: 'info', 
+        message: `Appliance stats: mean=${dataset.applianceStats.mean.toFixed(2)}, std=${dataset.applianceStats.std.toFixed(2)}` 
+      })}\n\n`)
+      res.write(`data: ${JSON.stringify({ log: 'info', message: 'Building neural network model...' })}\n\n`)
 
-      // Set up SSE for streaming training progress
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
-      })
+      // Build seq2point model
+      mlModel = createModel()
+      if (MODEL_TYPE === 'MSDCPredictor') {
+        mlModel.buildModel(MSDC_ARCHITECTURE, windowLength || 599, 3, MSDC_LITE) // MSDC with state classification
+      } else {
+        mlModel.buildModel(windowLength || 599, 1) // seq2point: single output for regression
+      }
+
+      res.write(`data: ${JSON.stringify({ log: 'success', message: 'Model built successfully. Starting training...' })}\n\n`)
 
       // Training callback for seq2point
       const onEpochEnd = async (epoch, logs, stoppedEarly) => {
@@ -838,11 +1005,24 @@ app.post('/api/ml/train', async (req, res) => {
         createdAt: new Date().toISOString(),
         trainedAt: new Date().toISOString(),
         trainingHistory: trainingHistory,
+        trainingConfig: {
+          windowLength: windowLength || 599,
+          batchSize: batchSize,
+          maxEpochs: epochs,
+          earlyStoppingEnabled: earlyStoppingEnabled || false,
+          patience: patience || null,
+          minDelta: minDelta || null,
+          actualEpochs: trainingHistory.length
+        },
         datasetInfo: {
           numberOfDays: dataset.numberOfDays,
           totalSamples: dataset.xTrain.shape[0] + dataset.xVal.shape[0],
           trainSamples: dataset.xTrain.shape[0],
-          valSamples: dataset.xVal.shape[0]
+          valSamples: dataset.xVal.shape[0],
+          dateRange: {
+            startDate: startDate || null,
+            endDate: endDate || null
+          }
         },
         finalMetrics: {
           loss: finalMetrics.loss,
@@ -930,7 +1110,7 @@ app.post('/api/ml/train', async (req, res) => {
       const { xTrain, yTrain, xVal, yVal } = createTensors(xData, yData, 0.8)
 
       // Build model with multi-label classification
-      mlModel = new PowerTagPredictor()
+      mlModel = createModel()
       mlModel.setTags(uniqueTags)
       mlModel.buildModel(300, 1, uniqueTags.length) // 300 = 5 windows * 60 points per window
 
@@ -1189,7 +1369,7 @@ app.post('/api/ml/models/load', async (req, res) => {
     const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
 
     // Load the model
-    mlModel = new PowerTagPredictor()
+    mlModel = createModel()
     await mlModel.load(modelPath)
     
     if (isSeq2Point || metadata.modelType === 'seq2point') {
@@ -1364,7 +1544,7 @@ app.post('/api/ml/predict', async (req, res) => {
       mlTags = metadata.uniqueTags
       mlStats = metadata.stats
 
-      mlModel = new PowerTagPredictor()
+      mlModel = createModel()
       mlModel.setTags(mlTags)
       await mlModel.load(modelDir)
 
@@ -1486,7 +1666,7 @@ app.post('/api/ml/predict-day-sliding', async (req, res) => {
       mlTags = metadata.uniqueTags
       mlStats = metadata.stats
 
-      mlModel = new PowerTagPredictor()
+      mlModel = createModel()
       mlModel.setTags(mlTags)
       await mlModel.load(modelDir)
 
@@ -1696,7 +1876,7 @@ app.post('/api/ml/predict-day', async (req, res) => {
       mlTags = metadata.uniqueTags
       mlStats = metadata.stats
 
-      mlModel = new PowerTagPredictor()
+      mlModel = createModel()
       mlModel.setTags(mlTags)
       await mlModel.load(modelDir)
 
@@ -2002,7 +2182,7 @@ app.post('/api/anomaly/tag-predictions', async (req, res) => {
       mlTags = metadata.uniqueTags
       mlStats = metadata.stats
 
-      mlModel = new PowerTagPredictor()
+      mlModel = createModel()
       mlModel.setTags(mlTags)
       await mlModel.load(modelDir)
 
@@ -2173,7 +2353,7 @@ app.post('/api/anomaly/train', async (req, res) => {
       mlTags = metadata.uniqueTags
       mlStats = metadata.stats
 
-      mlModel = new PowerTagPredictor()
+      mlModel = createModel()
       mlModel.setTags(mlTags)
       await mlModel.load(modelDir)
 
@@ -2410,7 +2590,7 @@ app.post('/api/anomaly/detect', async (req, res) => {
       mlTags = metadata.uniqueTags
       mlStats = metadata.stats
 
-      mlModel = new PowerTagPredictor()
+      mlModel = createModel()
       mlModel.setTags(mlTags)
       await mlModel.load(modelDir)
 
@@ -2692,6 +2872,96 @@ app.post('/api/seq2point/convert-onnx', async (req, res) => {
   }
 })
 
+// Delete a seq2point model
+app.delete('/api/seq2point/delete/:appliance', (req, res) => {
+  try {
+    let { appliance } = req.params
+
+    if (!appliance) {
+      return res.status(400).json({ error: 'Appliance name is required' })
+    }
+
+    // Sanitize appliance name
+    appliance = sanitizeApplianceName(appliance)
+
+    // Check if model is currently loaded
+    if (seq2pointModels.has(appliance)) {
+      // Unload the model from memory
+      seq2pointModels.delete(appliance)
+      seq2pointMetadata.delete(appliance)
+      useOnnxForModel.delete(appliance)
+      console.log(`Unloaded ${appliance} model from memory`)
+    }
+
+    const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${appliance}_model`)
+
+    if (!fs.existsSync(modelDir)) {
+      return res.status(404).json({ error: `Model not found for appliance: ${appliance}` })
+    }
+
+    // Delete the model directory
+    fs.rmSync(modelDir, { recursive: true, force: true })
+
+    console.log(`🗑️ Deleted seq2point model for ${appliance}`)
+
+    res.json({ success: true, message: `Model for ${appliance} deleted successfully` })
+  } catch (error) {
+    console.error('Error deleting seq2point model:', error)
+    res.status(500).json({ error: 'Failed to delete model', message: error.message })
+  }
+})
+
+// Export seq2point model as ZIP with all files
+app.get('/api/seq2point/export/:appliance', (req, res) => {
+  try {
+    let { appliance } = req.params
+
+    if (!appliance) {
+      return res.status(400).json({ error: 'Appliance name is required' })
+    }
+
+    // Sanitize appliance name
+    appliance = sanitizeApplianceName(appliance)
+
+    const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${appliance}_model`)
+
+    if (!fs.existsSync(modelDir)) {
+      return res.status(404).json({ error: `Model not found for appliance: ${appliance}` })
+    }
+
+    // Set response headers for ZIP download
+    const zipFilename = `${appliance}_model_export_${new Date().toISOString().split('T')[0]}.zip`
+    res.setHeader('Content-Type', 'application/zip')
+    res.setHeader('Content-Disposition', `attachment; filename="${zipFilename}"`)
+
+    // Create ZIP archive
+    const archive = archiver('zip', {
+      zlib: { level: 9 } // Maximum compression
+    })
+
+    // Handle archive errors
+    archive.on('error', (err) => {
+      console.error('Archive error:', err)
+      res.status(500).json({ error: 'Failed to create archive', message: err.message })
+    })
+
+    // Pipe archive to response
+    archive.pipe(res)
+
+    // Add all files from model directory
+    archive.directory(modelDir, false)
+
+    // Finalize the archive
+    archive.finalize()
+
+    console.log(`📤 Exporting model as ZIP for ${appliance}`)
+
+  } catch (error) {
+    console.error('Error exporting seq2point model:', error)
+    res.status(500).json({ error: 'Failed to export model', message: error.message })
+  }
+})
+
 // Set inference engine preference for a model
 app.post('/api/seq2point/set-inference-engine', async (req, res) => {
   try {
@@ -2748,6 +3018,50 @@ app.post('/api/seq2point/set-inference-engine', async (req, res) => {
   } catch (error) {
     console.error('Error setting inference engine:', error)
     res.status(500).json({ error: 'Failed to set inference engine', message: error.message })
+  }
+})
+
+// Update seq2point model name
+app.patch('/api/seq2point/update-name/:appliance', (req, res) => {
+  try {
+    let { appliance } = req.params
+    const { name } = req.body
+
+    if (!appliance) {
+      return res.status(400).json({ error: 'Appliance name is required' })
+    }
+
+    if (!name || typeof name !== 'string') {
+      return res.status(400).json({ error: 'Valid name is required' })
+    }
+
+    // Sanitize appliance name
+    appliance = sanitizeApplianceName(appliance)
+
+    const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${appliance}_model`)
+    const metadataPath = path.join(modelDir, 'metadata.json')
+
+    if (!fs.existsSync(metadataPath)) {
+      return res.status(404).json({ error: `Model not found for appliance: ${appliance}` })
+    }
+
+    // Read, update, and write metadata
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+    metadata.name = name
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2))
+
+    // Update in-memory metadata if loaded
+    if (seq2pointMetadata.has(appliance)) {
+      const loadedMetadata = seq2pointMetadata.get(appliance)
+      loadedMetadata.name = name
+    }
+
+    console.log(`✏️ Updated name for ${appliance} model to: ${name}`)
+
+    res.json({ success: true, appliance, name })
+  } catch (error) {
+    console.error('Error updating model name:', error)
+    res.status(500).json({ error: 'Failed to update model name', message: error.message })
   }
 })
 
@@ -3118,6 +3432,491 @@ app.post('/api/auto-predictor/run', async (req, res) => {
   }
 })
 
+// ============================================================================
+// LIBRARY MANAGEMENT API
+// ============================================================================
+
+// Get all models from library
+app.get('/api/library/models', (req, res) => {
+  try {
+    const libraryPath = path.join(__dirname, 'library', 'models.json')
+    
+    if (!fs.existsSync(libraryPath)) {
+      // Create empty library file if it doesn't exist
+      const libraryDir = path.join(__dirname, 'library')
+      if (!fs.existsSync(libraryDir)) {
+        fs.mkdirSync(libraryDir, { recursive: true })
+      }
+      fs.writeFileSync(libraryPath, JSON.stringify({ models: [] }, null, 2))
+      return res.json([])
+    }
+    
+    const libraryData = JSON.parse(fs.readFileSync(libraryPath, 'utf-8'))
+    res.json(libraryData.models || [])
+  } catch (error) {
+    console.error('Error loading library:', error)
+    res.status(500).json({ 
+      error: 'Failed to load library',
+      message: error.message 
+    })
+  }
+})
+
+// Create a new model
+app.post('/api/library/models', (req, res) => {
+  try {
+    const { name, description, deviceType, manufacturer, modelNumber, properties } = req.body
+    
+    if (!name || !properties || properties.powerMin === undefined || properties.powerMax === undefined) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: name, properties.powerMin, properties.powerMax' 
+      })
+    }
+    
+    const libraryPath = path.join(__dirname, 'library', 'models.json')
+    const libraryDir = path.join(__dirname, 'library')
+    
+    // Ensure directory exists
+    if (!fs.existsSync(libraryDir)) {
+      fs.mkdirSync(libraryDir, { recursive: true })
+    }
+    
+    // Load existing library
+    let libraryData = { models: [] }
+    if (fs.existsSync(libraryPath)) {
+      libraryData = JSON.parse(fs.readFileSync(libraryPath, 'utf-8'))
+    }
+    
+    // Create new model
+    const newModel = {
+      id: Date.now().toString(),
+      name,
+      description: description || '',
+      deviceType: deviceType || '',
+      manufacturer: manufacturer || '',
+      modelNumber: modelNumber || '',
+      properties: {
+        powerMin: properties.powerMin,
+        powerMax: properties.powerMax,
+        hasOnOff: properties.hasOnOff !== undefined ? properties.hasOnOff : true,
+        annualPowerWh: properties.annualPowerWh || 0
+      },
+      hasTrainedModel: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+    
+    libraryData.models.push(newModel)
+    
+    // Save library
+    fs.writeFileSync(libraryPath, JSON.stringify(libraryData, null, 2))
+    
+    console.log(`✅ Created new model: ${name}`)
+    res.json(newModel)
+  } catch (error) {
+    console.error('Error creating model:', error)
+    res.status(500).json({ 
+      error: 'Failed to create model',
+      message: error.message 
+    })
+  }
+})
+
+// Update an existing model
+app.put('/api/library/models/:id', (req, res) => {
+  try {
+    const { id } = req.params
+    const { name, description, deviceType, manufacturer, modelNumber, properties } = req.body
+    
+    const libraryPath = path.join(__dirname, 'library', 'models.json')
+    
+    if (!fs.existsSync(libraryPath)) {
+      return res.status(404).json({ error: 'Library not found' })
+    }
+    
+    const libraryData = JSON.parse(fs.readFileSync(libraryPath, 'utf-8'))
+    const modelIndex = libraryData.models.findIndex(m => m.id === id)
+    
+    if (modelIndex === -1) {
+      return res.status(404).json({ error: 'Model not found' })
+    }
+    
+    // Update model
+    libraryData.models[modelIndex] = {
+      ...libraryData.models[modelIndex],
+      name: name || libraryData.models[modelIndex].name,
+      description: description !== undefined ? description : libraryData.models[modelIndex].description,
+      deviceType: deviceType !== undefined ? deviceType : libraryData.models[modelIndex].deviceType,
+      manufacturer: manufacturer !== undefined ? manufacturer : libraryData.models[modelIndex].manufacturer,
+      modelNumber: modelNumber !== undefined ? modelNumber : libraryData.models[modelIndex].modelNumber,
+      properties: properties || libraryData.models[modelIndex].properties,
+      updatedAt: new Date().toISOString()
+    }
+    
+    // Save library
+    fs.writeFileSync(libraryPath, JSON.stringify(libraryData, null, 2))
+    
+    console.log(`✅ Updated model: ${libraryData.models[modelIndex].name}`)
+    res.json(libraryData.models[modelIndex])
+  } catch (error) {
+    console.error('Error updating model:', error)
+    res.status(500).json({ 
+      error: 'Failed to update model',
+      message: error.message 
+    })
+  }
+})
+
+// Delete a model
+app.delete('/api/library/models/:id', (req, res) => {
+  try {
+    const { id } = req.params
+    
+    const libraryPath = path.join(__dirname, 'library', 'models.json')
+    
+    if (!fs.existsSync(libraryPath)) {
+      return res.status(404).json({ error: 'Library not found' })
+    }
+    
+    const libraryData = JSON.parse(fs.readFileSync(libraryPath, 'utf-8'))
+    const modelIndex = libraryData.models.findIndex(m => m.id === id)
+    
+    if (modelIndex === -1) {
+      return res.status(404).json({ error: 'Model not found' })
+    }
+    
+    const deletedModel = libraryData.models.splice(modelIndex, 1)[0]
+    
+    // Save library
+    fs.writeFileSync(libraryPath, JSON.stringify(libraryData, null, 2))
+    
+    console.log(`🗑️ Deleted model: ${deletedModel.name}`)
+    res.json({ success: true, model: deletedModel })
+  } catch (error) {
+    console.error('Error deleting model:', error)
+    res.status(500).json({ 
+      error: 'Failed to delete model',
+      message: error.message 
+    })
+  }
+})
+
+// Export a model
+app.get('/api/library/export/:id', (req, res) => {
+  try {
+    const { id } = req.params
+    
+    const libraryPath = path.join(__dirname, 'library', 'models.json')
+    
+    if (!fs.existsSync(libraryPath)) {
+      return res.status(404).json({ error: 'Library not found' })
+    }
+    
+    const libraryData = JSON.parse(fs.readFileSync(libraryPath, 'utf-8'))
+    const model = libraryData.models.find(m => m.id === id)
+    
+    if (!model) {
+      return res.status(404).json({ error: 'Model not found' })
+    }
+    
+    // Set headers for download
+    res.setHeader('Content-Type', 'application/json')
+    res.setHeader('Content-Disposition', `attachment; filename="${model.name.replace(/[^a-z0-9]/gi, '_')}_export.json"`)
+    
+    // Send model data
+    res.json({
+      exportVersion: '1.0',
+      exportedAt: new Date().toISOString(),
+      model: model
+    })
+  } catch (error) {
+    console.error('Error exporting model:', error)
+    res.status(500).json({ 
+      error: 'Failed to export model',
+      message: error.message 
+    })
+  }
+})
+
+// Import a model (JSON or ZIP)
+app.post('/api/library/import', async (req, res) => {
+  try {
+    // Handle multipart form data for file upload
+    const multer = await import('multer')
+    const AdmZip = await import('adm-zip')
+    
+    const storage = multer.default.memoryStorage()
+    const upload = multer.default({ storage }).single('file')
+    
+    upload(req, res, async (err) => {
+      if (err) {
+        return res.status(400).json({ error: 'File upload failed', message: err.message })
+      }
+      
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' })
+      }
+      
+      try {
+        const libraryPath = path.join(__dirname, 'library', 'models.json')
+        const libraryDir = path.join(__dirname, 'library')
+        
+        // Ensure directory exists
+        if (!fs.existsSync(libraryDir)) {
+          fs.mkdirSync(libraryDir, { recursive: true })
+        }
+        
+        // Load existing library
+        let libraryData = { models: [] }
+        if (fs.existsSync(libraryPath)) {
+          libraryData = JSON.parse(fs.readFileSync(libraryPath, 'utf-8'))
+        }
+        
+        let importedModel
+        let hasModelFiles = false
+        
+        // Check file type
+        if (req.file.originalname.endsWith('.zip')) {
+          // Handle ZIP import
+          const zip = new AdmZip.default(req.file.buffer)
+          const zipEntries = zip.getEntries()
+          
+          // Find and parse library_metadata.json
+          const metadataEntry = zipEntries.find(e => e.entryName === 'library_metadata.json')
+          if (!metadataEntry) {
+            return res.status(400).json({ error: 'Invalid ZIP: missing library_metadata.json' })
+          }
+          
+          const metadata = JSON.parse(metadataEntry.getData().toString('utf8'))
+          const libraryInfo = metadata.libraryData
+          
+          if (!libraryInfo || !libraryInfo.name) {
+            return res.status(400).json({ error: 'Invalid library metadata' })
+          }
+          
+          // Extract model files to saved_models directory
+          const appliance = sanitizeApplianceName(metadata.appliance || libraryInfo.deviceType || libraryInfo.name)
+          const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${appliance}_model`)
+          
+          // Create model directory
+          if (fs.existsSync(modelDir)) {
+            // Remove existing model
+            fs.rmSync(modelDir, { recursive: true, force: true })
+          }
+          fs.mkdirSync(modelDir, { recursive: true })
+          
+          // Extract all model files
+          zipEntries.forEach(entry => {
+            if (entry.entryName.startsWith('model/')) {
+              const fileName = entry.entryName.replace('model/', '')
+              if (fileName) {
+                const filePath = path.join(modelDir, fileName)
+                const fileDir = path.dirname(filePath)
+                if (!fs.existsSync(fileDir)) {
+                  fs.mkdirSync(fileDir, { recursive: true })
+                }
+                fs.writeFileSync(filePath, entry.getData())
+              }
+            }
+          })
+          
+          hasModelFiles = true
+          
+          // Create imported model
+          importedModel = {
+            ...libraryInfo,
+            id: Date.now().toString(),
+            linkedApplianceName: appliance,
+            hasTrainedModel: true,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+          
+          console.log(`📥 Imported model with files: ${importedModel.name} (appliance: ${appliance})`)
+          
+        } else if (req.file.originalname.endsWith('.json')) {
+          // Handle JSON import (metadata only)
+          const jsonData = JSON.parse(req.file.buffer.toString('utf8'))
+          const model = jsonData.model || jsonData
+          
+          if (!model || !model.name) {
+            return res.status(400).json({ error: 'Invalid model data' })
+          }
+          
+          importedModel = {
+            ...model,
+            id: Date.now().toString(),
+            hasTrainedModel: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+          
+          console.log(`📥 Imported model metadata: ${importedModel.name}`)
+        } else {
+          return res.status(400).json({ error: 'Invalid file type. Only .json and .zip files are supported' })
+        }
+        
+        libraryData.models.push(importedModel)
+        
+        // Save library
+        fs.writeFileSync(libraryPath, JSON.stringify(libraryData, null, 2))
+        
+        res.json({ 
+          success: true,
+          model: importedModel,
+          hasModelFiles 
+        })
+        
+      } catch (innerError) {
+        console.error('Error processing import:', innerError)
+        res.status(500).json({ 
+          error: 'Failed to process import',
+          message: innerError.message 
+        })
+      }
+    })
+    
+  } catch (error) {
+    console.error('Error importing model:', error)
+    res.status(500).json({ 
+      error: 'Failed to import model',
+      message: error.message 
+    })
+  }
+})
+
+// Link a trained TensorFlow model to a library model
+app.post('/api/library/models/:id/link', (req, res) => {
+  try {
+    const { id } = req.params
+    const { applianceName } = req.body
+    
+    if (!applianceName) {
+      return res.status(400).json({ error: 'Missing applianceName' })
+    }
+    
+    const libraryPath = path.join(__dirname, 'library', 'models.json')
+    
+    if (!fs.existsSync(libraryPath)) {
+      return res.status(404).json({ error: 'Library not found' })
+    }
+    
+    const libraryData = JSON.parse(fs.readFileSync(libraryPath, 'utf-8'))
+    const modelIndex = libraryData.models.findIndex(m => m.id === id)
+    
+    if (modelIndex === -1) {
+      return res.status(404).json({ error: 'Model not found' })
+    }
+    
+    // Check if TensorFlow model exists
+    const tfModelPath = path.join(__dirname, 'models', sanitizeApplianceName(applianceName))
+    const hasTrainedModel = fs.existsSync(tfModelPath)
+    
+    // Update model with linked appliance name
+    libraryData.models[modelIndex] = {
+      ...libraryData.models[modelIndex],
+      linkedApplianceName: applianceName,
+      hasTrainedModel: hasTrainedModel,
+      updatedAt: new Date().toISOString()
+    }
+    
+    // Save library
+    fs.writeFileSync(libraryPath, JSON.stringify(libraryData, null, 2))
+    
+    res.json(libraryData.models[modelIndex])
+  } catch (error) {
+    console.error('Error linking model:', error)
+    res.status(500).json({ 
+      error: 'Failed to link model',
+      message: error.message 
+    })
+  }
+})
+
+// Export ML model to library exports folder with library metadata
+app.post('/api/library/export-model', async (req, res) => {
+  try {
+    const { appliance, libraryModelId, libraryData } = req.body
+    
+    if (!appliance || !libraryModelId || !libraryData) {
+      return res.status(400).json({ error: 'Missing required fields' })
+    }
+    
+    // Sanitize appliance name
+    const sanitizedAppliance = sanitizeApplianceName(appliance)
+    const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${sanitizedAppliance}_model`)
+    
+    if (!fs.existsSync(modelDir)) {
+      return res.status(404).json({ error: `Model not found for appliance: ${appliance}` })
+    }
+    
+    // Create library exports directory
+    const exportsDir = path.join(__dirname, 'library', 'exports')
+    if (!fs.existsSync(exportsDir)) {
+      fs.mkdirSync(exportsDir, { recursive: true })
+    }
+    
+    // Create ZIP file
+    const zipFilename = `${sanitizedAppliance}_export_${new Date().toISOString().split('T')[0]}.zip`
+    const zipPath = path.join(exportsDir, zipFilename)
+    const output = fs.createWriteStream(zipPath)
+    const archive = archiver('zip', {
+      zlib: { level: 9 }
+    })
+    
+    // Handle archive errors
+    archive.on('error', (err) => {
+      console.error('Archive error:', err)
+      return res.status(500).json({ error: 'Failed to create archive', message: err.message })
+    })
+    
+    // Pipe archive to file
+    archive.pipe(output)
+    
+    // Add all model files
+    archive.directory(modelDir, 'model')
+    
+    // Add library metadata as a JSON file
+    const exportMetadata = {
+      exportDate: new Date().toISOString(),
+      appliance: appliance,
+      libraryModelId: libraryModelId,
+      libraryData: libraryData,
+      exportVersion: '1.0.0'
+    }
+    archive.append(JSON.stringify(exportMetadata, null, 2), { name: 'library_metadata.json' })
+    
+    // Finalize and wait for completion
+    await archive.finalize()
+    
+    // Wait for output stream to finish
+    await new Promise((resolve, reject) => {
+      output.on('close', resolve)
+      output.on('error', reject)
+    })
+    
+    console.log(`📦 Created export: ${zipPath}`)
+    
+    res.json({ 
+      success: true, 
+      exportPath: zipPath,
+      filename: zipFilename,
+      size: archive.pointer()
+    })
+    
+  } catch (error) {
+    console.error('Error exporting model to library:', error)
+    res.status(500).json({ 
+      error: 'Failed to export model',
+      message: error.message 
+    })
+  }
+})
+
+// ============================================================================
+// END LIBRARY MANAGEMENT API
+// ============================================================================
+
 // Catch-all route to serve frontend for client-side routing
 // Note: This must be the LAST route defined, after all API routes
 app.use((req, res, next) => {
@@ -3263,6 +4062,7 @@ app.get('/api/gsp/config', (req, res) => {
     }
   })
 })
+// ============================================================================
 
 // Graceful shutdown
 process.on('SIGTERM', () => {

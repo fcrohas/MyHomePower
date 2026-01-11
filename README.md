@@ -10,19 +10,22 @@ A Vue.js application for tagging and analyzing power consumption history from Ho
 - 🔌 **Home Assistant Integration**: Connect directly to your Home Assistant instance via REST API
 - 💾 **Local Storage**: Tags are saved locally in your browser
 - 📈 **Statistics**: View tag statistics and breakdown by label
-- 🧠 **ML Tag Predictor**: Deep learning model to predict power usage tags based on patterns (NEW!)
+- 🧠 **ML Tag Predictor**: Deep learning model to predict power usage tags based on patterns
+- 📚 **Appliance Model Library**: Manage and share appliance models for power disaggregation (NEW!)
 
-## What's New: ML Tag Predictor
+## What's New: Appliance Model Library
 
-The app now includes a machine learning feature that learns from your tagged data to predict power usage patterns! 
+The app now includes a comprehensive library system for managing appliance models!
 
-### Key Capabilities:
-- **Train a CNN1D + LSTM model** on your historical tagged data
-- **Real-time training progress** with learning curves (loss and accuracy)
-- **Make predictions** for the next 10 minutes based on the last 50 minutes of power data
-- **View confidence scores** for all possible tags
+### Key Features:
+- **Model Cards**: Beautiful card-based interface for each appliance
+- **Import/Export**: Share models as JSON files
+- **Technical Specs**: Track device type, manufacturer, model number
+- **Power Properties**: Define min/max power, on/off states, annual consumption
+- **Model Linking**: Connect trained ML models to library entries
+- **Sample Models**: 8 pre-configured appliances to get started
 
-See [ML_FEATURE.md](ML_FEATURE.md) for detailed documentation.
+See [LIBRARY_FEATURE.md](LIBRARY_FEATURE.md) for detailed documentation and [LIBRARY_QUICKSTART.md](LIBRARY_QUICKSTART.md) to get started!
 
 ## Setup
 
@@ -201,5 +204,5 @@ The built files will be in the `dist/` directory, ready to deploy to any static 
 
 ## License
 
-MIT
+CC BY-NC-SA 4.0 (Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International)
 

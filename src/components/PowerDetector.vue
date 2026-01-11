@@ -1,12 +1,5 @@
 <template>
   <div class="power-detector">
-    <div class="detector-header">
-      <h2>🔍 Power Detector - AI Tag Prediction</h2>
-      <p class="description">
-        Using the trained ML model to predict activity tags for each 10-minute window
-      </p>
-    </div>
-
     <!-- Date Selection -->
     <div class="date-selector">
       <button @click="previousDay" class="nav-btn">← Previous Day</button>
@@ -227,40 +220,97 @@
 
     <!-- Charts Container -->
     <div v-if="predictions.length > 0 && !loading" class="charts-container">
-      <!-- Power Chart with Predicted Tags -->
-      <div class="chart-section full-width">
-        <div class="chart-header">
-          <h3>📊 Power Consumption with Predicted Tags</h3>
-          <div v-if="selectedAppliance" class="filter-badge">
-            <span class="filter-label">Filtered by:</span>
-            <span class="filter-appliance" :style="{ backgroundColor: getTagColor(selectedAppliance) }">
-              {{ selectedAppliance }}
-            </span>
-            <button @click="clearApplianceFilter" class="clear-filter-btn" title="Show all appliances">✕</button>
+      <!-- Left Column: Power Chart and Predictions Table -->
+      <div class="left-column">
+        <div class="chart-section">
+          <div class="chart-header">
+            <h3>📊 Power Consumption with Predicted Tags</h3>
+            <div v-if="selectedAppliance" class="filter-badge">
+              <span class="filter-label">Filtered by:</span>
+              <span class="filter-appliance" :style="{ backgroundColor: getTagColor(selectedAppliance) }">
+                {{ selectedAppliance }}
+              </span>
+              <button @click="clearApplianceFilter" class="clear-filter-btn" title="Show all appliances">✕</button>
+            </div>
+          </div>
+          <div class="chart-wrapper power-chart-wrapper">
+            <canvas ref="powerChartCanvas"></canvas>
+          </div>
+          <div class="legend-info">
+            Each colored region represents a predicted activity tag for a 10-minute window
           </div>
         </div>
-        <div class="chart-wrapper power-chart-wrapper">
-          <canvas ref="powerChartCanvas"></canvas>
-        </div>
-        <div class="legend-info">
-          Each colored region represents a predicted activity tag for a 10-minute window
+
+        <!-- Detailed Predictions Table -->
+        <div class="predictions-table-inline">
+          <div class="accordion-header" @click="showDetailedPredictions = !showDetailedPredictions">
+            <h3>🎯 Detailed Predictions</h3>
+            <span class="accordion-icon">{{ showDetailedPredictions ? '▼' : '▶' }}</span>
+          </div>
+          <div v-show="showDetailedPredictions" class="accordion-content">
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Time Range</th>
+                    <th>Predicted Tags</th>
+                    <th>Confidence</th>
+                    <th>Avg Power</th>
+                    <th>Appliance Energy (Wh)</th>
+                    <th>Standby Energy (Wh)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(pred, idx) in predictions" :key="idx">
+                    <td>{{ pred.startTime }} - {{ pred.endTime }}</td>
+                    <td>
+                      <div v-if="pred.tags && pred.tags.length > 0" class="multi-tags">
+                        <span 
+                          v-for="(tagInfo, tidx) in pred.tags" 
+                          :key="tidx"
+                          class="tag-badge with-probability" 
+                          :style="{ backgroundColor: getTagColor(tagInfo.tag) }"
+                          :title="`${tagInfo.probability ? (tagInfo.probability * 100).toFixed(1) : '0.0'}%`"
+                        >
+                          <span class="tag-name">{{ tagInfo.tag === 'standby' ? 'other' : tagInfo.tag }}</span>
+                          <span class="tag-probability">{{ tagInfo.probability ? (tagInfo.probability * 100).toFixed(1) : '0.0' }}%</span>
+                        </span>
+                      </div>
+                      <span v-else class="tag-badge" style="background-color: #95a5a6;">other</span>
+                    </td>
+                    <td>
+                      <div v-if="pred.tags && pred.tags.length > 0 && pred.tags[0].probability !== undefined" class="confidence-bar">
+                        <div class="confidence-fill" :style="{ width: (pred.tags[0].probability * 100) + '%' }"></div>
+                        <span class="confidence-text">{{ (pred.tags[0].probability * 100).toFixed(1) }}%</span>
+                      </div>
+                      <span v-else>N/A</span>
+                    </td>
+                    <td>{{ pred.avgPower?.toFixed(1) || 'N/A' }} W</td>
+                    <td>{{ pred.energy?.toFixed(2) || 'N/A' }}</td>
+                    <td>{{ pred.standbyEnergy?.toFixed(2) || 'N/A' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Second Row: Pie Chart and Stats -->
-      <div class="chart-section">
-        <h3>📈 Energy Consumption by Activity</h3>
-        <div class="chart-wrapper pie-wrapper">
-          <canvas ref="pieChartCanvas"></canvas>
+      <!-- Right Column: Energy Charts -->
+      <div class="energy-charts-column">
+        <div class="chart-section">
+          <h3>📈 Energy Consumption by Activity</h3>
+          <div class="chart-wrapper pie-wrapper">
+            <canvas ref="pieChartCanvas"></canvas>
+          </div>
+          <div class="legend-info">
+            💡 Click on a slice to filter the power chart by appliance
+          </div>
         </div>
-        <div class="legend-info">
-          💡 Click on a slice to filter the power chart by appliance
-        </div>
-      </div>
 
-      <div class="chart-section">
-        <h3>📊 Energy Breakdown</h3>
-        <div class="stats-summary">
+        <div class="chart-section">
+          <h3>📊 Energy Breakdown</h3>
+          <div class="stats-summary">
           <div class="stat-item highlight">
             <span class="label">💡 Appliance Energy:</span>
             <span class="value">{{ totalEnergy.toFixed(2) }} Wh</span>
@@ -277,74 +327,8 @@
             <span class="label">📊 Total Energy:</span>
             <span class="value">{{ totalCombinedEnergy.toFixed(2) }} Wh</span>
           </div>
-          <div class="stat-item">
-            <span class="label">Active Periods:</span>
-            <span class="value">{{ predictions.length }}</span>
-          </div>
-          <div class="stat-item">
-            <span class="label">Unique Activities:</span>
-            <span class="value">{{ uniqueTags.length }}</span>
-          </div>
         </div>
       </div>
-    </div>
-
-    <!-- Detailed Predictions Table -->
-    <div v-if="predictions.length > 0 && !loading" class="predictions-table">
-      <div class="accordion-header" @click="showDetailedPredictions = !showDetailedPredictions">
-        <h3>🎯 Detailed Predictions</h3>
-        <span class="accordion-icon">{{ showDetailedPredictions ? '▼' : '▶' }}</span>
-      </div>
-      <div v-show="showDetailedPredictions" class="accordion-content">
-        <div class="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>Time Range</th>
-                <th>Predicted Tags</th>
-                <th>Confidence</th>
-                <th>Avg Power</th>
-                <th>Appliance Energy (Wh)</th>
-                <th>Standby Energy (Wh)</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(pred, idx) in predictions" :key="idx">
-                <td>{{ pred.startTime }} - {{ pred.endTime }}</td>
-                <td>
-                  <div v-if="pred.tags && pred.tags.length > 0" class="multi-tags">
-                    <span 
-                      v-for="(tagInfo, tidx) in pred.tags" 
-                      :key="tidx"
-                      class="tag-badge with-probability" 
-                      :style="{ backgroundColor: getTagColor(tagInfo.tag) }"
-                      :title="`${tagInfo.probability ? (tagInfo.probability * 100).toFixed(1) : '0.0'}%`"
-                    >
-                      <span class="tag-name">{{ tagInfo.tag === 'standby' ? 'other' : tagInfo.tag }}</span>
-                      <span class="tag-probability">{{ tagInfo.probability ? (tagInfo.probability * 100).toFixed(1) : '0.0' }}%</span>
-                    </span>
-                  </div>
-                  <span 
-                    v-else 
-                    class="tag-badge" 
-                    :style="{ backgroundColor: pred.color }"
-                  >
-                    {{ pred.displayTag || pred.tag }}
-                  </span>
-                </td>
-                <td>
-                  <div class="confidence-bar">
-                    <div class="confidence-fill" :style="{ width: (pred.confidence * 100) + '%' }"></div>
-                    <span class="confidence-text">{{ pred.confidence ? (pred.confidence * 100).toFixed(1) : '0.0' }}%</span>
-                  </div>
-                </td>
-                <td>{{ pred.avgPower ? pred.avgPower.toFixed(0) : '0' }} W</td>
-                <td>{{ pred.energy ? pred.energy.toFixed(2) : '0.00' }} Wh</td>
-                <td>{{ pred.standbyEnergy ? pred.standbyEnergy.toFixed(2) : '0.00' }} Wh</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
       </div>
     </div>
   </div>
@@ -676,11 +660,24 @@ const loadSeq2PointModels = async () => {
     const response = await fetch('/api/seq2point/models')
     if (response.ok) {
       const data = await response.json()
+      const previousModels = new Set(seq2pointModels.value)
+      
       // Extract just the appliance names from the model objects
       seq2pointModels.value = (data.models || []).map(m => m.appliance)
-      // Select all models by default
-      if (seq2pointModels.value.length > 0 && selectedSeq2PointModels.value.length === 0) {
-        selectedSeq2PointModels.value = [...seq2pointModels.value]
+      
+      // Auto-select new models that weren't in the previous list
+      if (seq2pointModels.value.length > 0) {
+        if (selectedSeq2PointModels.value.length === 0) {
+          // First load: select all models
+          selectedSeq2PointModels.value = [...seq2pointModels.value]
+        } else {
+          // Keep existing selections and add new models
+          const newModels = seq2pointModels.value.filter(m => !previousModels.has(m))
+          selectedSeq2PointModels.value = [
+            ...selectedSeq2PointModels.value.filter(m => seq2pointModels.value.includes(m)), // Keep existing valid selections
+            ...newModels // Add new models
+          ]
+        }
       }
     } else {
       console.error('Failed to load seq2point models')
@@ -801,6 +798,13 @@ const onMethodChange = () => {
     useSeq2Point.value = true
   }
 }
+
+// Watch for settings dialog opening to refresh models list
+watch(showSettingsDialog, (isOpen) => {
+  if (isOpen && useSeq2Point.value) {
+    loadSeq2PointModels()
+  }
+})
 
 // Handle auto-sync toggle change
 const onAutoSyncChange = () => {
@@ -1815,9 +1819,10 @@ const renderPieChart = () => {
       }]
     },
     options: {
-      responsive: true,
+      responsive: false,
       maintainAspectRatio: true,
       aspectRatio: 1.5,
+      animation: false,
       onClick: (event, elements) => {
         if (elements.length > 0) {
           const index = elements[0].index
@@ -1891,25 +1896,10 @@ onUnmounted(() => {
 
 <style scoped>
 .power-detector {
-  padding: 1.5rem;
-  max-width: 1600px;
-  margin: 0 auto;
-}
-
-.detector-header {
-  margin-bottom: 1.5rem;
-  text-align: center;
-}
-
-.detector-header h2 {
-  font-size: 1.75rem;
-  color: #2c3e50;
-  margin-bottom: 0.5rem;
-}
-
-.description {
-  color: #666;
-  font-size: 0.95rem;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .dialog-overlay {
@@ -2154,10 +2144,10 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 1rem;
-  margin-bottom: 1.5rem;
-  padding: 1rem;
-  background: #f8f9fa;
-  border-radius: 8px;
+  padding: 0.5rem;
+  background: white;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
 }
 
 .current-date {
@@ -2228,8 +2218,9 @@ onUnmounted(() => {
   color: #856404;
   padding: 1rem;
   border-radius: 6px;
-  margin-bottom: 1rem;
+  margin: 1rem;
   text-align: center;
+  flex-shrink: 0;
 }
 
 .loading {
@@ -2261,26 +2252,52 @@ onUnmounted(() => {
   color: #721c24;
   padding: 1rem;
   border-radius: 6px;
-  margin-bottom: 1rem;
+  margin: 1rem;
   text-align: center;
+  flex-shrink: 0;
 }
 
 .charts-container {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.5rem;
-  margin-bottom: 2rem;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 1rem;
+  padding: 1rem;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.left-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 0;
+}
+
+.left-column > .chart-section {
+  flex-shrink: 0;
+}
+
+.energy-charts-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 0;
 }
 
 .chart-section {
   background: white;
-  padding: 1.5rem;
+  padding: 1rem;
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
-.chart-section.full-width {
-  grid-column: 1 / -1;
+.energy-charts-column .chart-section {
+  flex: 1;
+  min-height: 0;
 }
 
 .chart-header {
@@ -2293,9 +2310,10 @@ onUnmounted(() => {
 }
 
 .chart-section h3 {
-  margin: 0;
+  margin: 0 0 0.75rem 0;
   color: #2c3e50;
-  font-size: 1.25rem;
+  font-size: 1.1rem;
+  flex-shrink: 0;
 }
 
 .filter-badge {
@@ -2344,15 +2362,16 @@ onUnmounted(() => {
 .chart-wrapper {
   position: relative;
   width: 100%;
-  height: 300px;
+  flex: 1;
+  min-height: 200px;
 }
 
 .power-chart-wrapper {
-  height: 400px;
+  min-height: 300px;
 }
 
 .pie-wrapper {
-  height: 350px;
+  min-height: 250px;
 }
 
 .legend-info {
@@ -2363,22 +2382,25 @@ onUnmounted(() => {
 }
 
 .stats-summary {
-  padding: 1rem;
+  padding: 0.75rem;
+  flex: 1;
+  overflow-y: auto;
 }
 
 .stat-item {
   display: flex;
   justify-content: space-between;
-  padding: 0.75rem;
+  padding: 0.5rem 0.75rem;
   margin-bottom: 0.5rem;
   background: #f8f9fa;
   border-radius: 6px;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
 }
 
 .stat-item .label {
   color: #666;
   font-weight: 500;
+  font-size: 0.85rem;
 }
 
 .stat-item .value {
@@ -2423,9 +2445,36 @@ onUnmounted(() => {
 
 .predictions-table {
   background: white;
-  padding: 1.5rem;
+  padding: 1rem;
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  margin: 0 1rem 1rem 1rem;
+  flex-shrink: 0;
+}
+
+.predictions-table-inline {
+  background: white;
+  padding: 1rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.predictions-table-inline .accordion-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.predictions-table-inline .table-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 300px;
 }
 
 .accordion-header {
@@ -2455,7 +2504,13 @@ onUnmounted(() => {
 .predictions-table h3 {
   margin-bottom: 0;
   color: #2c3e50;
-  font-size: 1.25rem;
+  font-size: 1.1rem;
+}
+
+.predictions-table-inline h3 {
+  margin-bottom: 0;
+  color: #2c3e50;
+  font-size: 1.1rem;
 }
 
 .table-wrapper {
@@ -2677,19 +2732,21 @@ tbody tr:hover {
   .charts-container {
     grid-template-columns: 1fr;
   }
-  
-  .chart-section.full-width {
-    grid-column: 1;
-  }
 }
 
 @media (max-width: 768px) {
   .date-selector {
-    flex-direction: column;
+    flex-wrap: wrap;
+    gap: 0.5rem;
   }
   
-  .power-detector {
-    padding: 1rem;
+  .charts-container {
+    padding: 0.5rem;
+    gap: 0.5rem;
+  }
+  
+  .chart-section {
+    padding: 0.75rem;
   }
 }
 </style>
