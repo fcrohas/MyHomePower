@@ -226,121 +226,176 @@
 
           <!-- General Settings -->
           <div v-show="settingsTab === 'general'" class="settings-content">
-            <h2>General Settings</h2>
-            <div class="settings-section">
-              <h3>Application</h3>
-              <div class="form-group">
-                <label>Default View:</label>
-                <select v-model="settings.defaultView" @change="saveSettings">
-                  <option value="detector">Power Detector</option>
-                  <option value="libraries">Libraries</option>
-                  <option value="ml">ML Trainer</option>
-                  <option value="tagging">Power Tagging</option>
-                  <option value="anomaly">Anomaly Detector</option>
-                </select>
+            <div class="settings-group">
+              <div class="group-header">
+                <h3>Application Preferences</h3>
+                <p class="group-description">Configure default application behavior</p>
               </div>
-              <div class="form-group">
-                <label>
-                  <input type="checkbox" v-model="settings.autoLoadData" @change="saveSettings" />
-                  Auto-connect to Home Assistant on startup
-                </label>
+              <div class="group-body">
+                <div class="form-row">
+                  <label class="form-label">Default View</label>
+                  <div class="form-input-wrapper">
+                    <select v-model="settings.defaultView" @change="saveSettings" class="form-input">
+                      <option value="detector">Power Detector</option>
+                      <option value="libraries">Libraries</option>
+                      <option value="ml">ML Trainer</option>
+                      <option value="tagging">Power Tagging</option>
+                      <option value="anomaly">Anomaly Detector</option>
+                    </select>
+                    <span class="form-hint">Default tab to show when application starts</span>
+                  </div>
+                </div>
+                <div class="form-row-check">
+                  <label class="checkbox-label">
+                    <input type="checkbox" v-model="settings.autoLoadData" @change="saveSettings" />
+                    <span class="checkbox-text">
+                      <strong>Auto-connect to Home Assistant on startup</strong>
+                      <span class="checkbox-hint">Automatically establish connection when application loads</span>
+                    </span>
+                  </label>
+                </div>
               </div>
             </div>
           </div>
 
           <!-- Detector Settings -->
           <div v-show="settingsTab === 'detector'" class="settings-content">
-            <h2>Detector Settings</h2>
-            <div class="settings-section">
-              <h3>Detection</h3>
-              <div class="form-group">
-                <label for="threshold">Detection Threshold:</label>
-                <input 
-                  type="range" 
-                  id="threshold" 
-                  v-model.number="detectorSettings.threshold" 
-                  min="0.1" 
-                  max="0.7" 
-                  step="0.05"
-                  @change="saveDetectorSettings"
-                />
-                <span class="config-value">{{ (detectorSettings.threshold * 100).toFixed(0) }}%</span>
-                <span class="config-hint">Higher = fewer false positives</span>
+            <div class="settings-group">
+              <div class="group-header">
+                <h3>Detection Configuration</h3>
+                <p class="group-description">Configure detection threshold and confidence levels</p>
+              </div>
+              <div class="group-body">
+                <div class="form-row">
+                  <label class="form-label">Detection Threshold</label>
+                  <div class="form-input-wrapper">
+                    <div style="display: flex; align-items: center; gap: 1rem;">
+                      <input 
+                        type="range" 
+                        id="threshold" 
+                        v-model.number="detectorSettings.threshold" 
+                        min="0.1" 
+                        max="0.7" 
+                        step="0.05"
+                        @change="saveDetectorSettings"
+                        style="flex: 1;"
+                      />
+                      <span class="config-value">{{ (detectorSettings.threshold * 100).toFixed(0) }}%</span>
+                    </div>
+                    <span class="form-hint">Higher values reduce false positives but may miss some detections</span>
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div class="settings-section">
-              <h3>Disaggregation Method</h3>
-              <div class="form-group">
-                <label>
-                  <input type="checkbox" v-model="detectorSettings.useSeq2Point" @change="saveDetectorSettings" />
-                  Enable Seq2Point energy disaggregation
-                </label>
-                <p class="form-hint">Supervised ML - requires training per appliance</p>
+            <div class="settings-group">
+              <div class="group-header">
+                <h3>Disaggregation Methods</h3>
+                <p class="group-description">Select energy disaggregation algorithms to use</p>
               </div>
-              
-              <div class="form-group">
-                <label>
-                  <input type="checkbox" v-model="detectorSettings.useGSP" @change="saveDetectorSettings" />
-                  Enable GSP energy disaggregation
-                </label>
-                <p class="form-hint">Training-less - auto-discovers all appliances</p>
+              <div class="group-body">
+                <div class="form-row-check">
+                  <label class="checkbox-label">
+                    <input type="checkbox" v-model="detectorSettings.useSeq2Point" @change="saveDetectorSettings" />
+                    <span class="checkbox-text">
+                      <strong>Enable Seq2Point energy disaggregation</strong>
+                      <span class="checkbox-hint">Supervised ML - requires training per appliance</span>
+                    </span>
+                  </label>
+                </div>
+                
+                <div class="form-row-check">
+                  <label class="checkbox-label">
+                    <input type="checkbox" v-model="detectorSettings.useGSP" @change="saveDetectorSettings" />
+                    <span class="checkbox-text">
+                      <strong>Enable GSP energy disaggregation</strong>
+                      <span class="checkbox-hint">Training-less - auto-discovers all appliances</span>
+                    </span>
+                  </label>
+                </div>
               </div>
+            </div>
 
-              <div v-if="detectorSettings.useGSP" class="form-group">
-                <h4>GSP Configuration</h4>
-                <div class="gsp-config">
-                  <div class="form-group">
-                    <label for="gsp-sigma">Clustering Sensitivity (σ):</label>
-                    <input 
-                      type="range" 
-                      id="gsp-sigma" 
-                      v-model.number="detectorSettings.gspConfig.sigma" 
-                      min="5" 
-                      max="50" 
-                      step="5"
-                      @change="saveDetectorSettings"
-                    />
-                    <span class="config-value">{{ detectorSettings.gspConfig.sigma }}</span>
+            <div v-if="detectorSettings.useGSP" class="settings-group">
+              <div class="group-header">
+                <h3>GSP Advanced Configuration</h3>
+                <p class="group-description">Fine-tune GSP algorithm parameters</p>
+              </div>
+              <div class="group-body">
+                <div class="form-row">
+                  <label class="form-label">Clustering Sensitivity (σ)</label>
+                  <div class="form-input-wrapper">
+                    <div style="display: flex; align-items: center; gap: 1rem;">
+                      <input 
+                        type="range" 
+                        id="gsp-sigma" 
+                        v-model.number="detectorSettings.gspConfig.sigma" 
+                        min="5" 
+                        max="50" 
+                        step="5"
+                        @change="saveDetectorSettings"
+                        style="flex: 1;"
+                      />
+                      <span class="config-value">{{ detectorSettings.gspConfig.sigma }}</span>
+                    </div>
+                    <span class="form-hint">Controls how appliances are grouped together</span>
                   </div>
-                  <div class="form-group">
-                    <label for="gsp-threshold-pos">Min ON Power (W):</label>
-                    <input 
-                      type="range" 
-                      id="gsp-threshold-pos" 
-                      v-model.number="detectorSettings.gspConfig.T_Positive" 
-                      min="10" 
-                      max="100" 
-                      step="10"
-                      @change="saveDetectorSettings"
-                    />
-                    <span class="config-value">{{ detectorSettings.gspConfig.T_Positive }}</span>
+                </div>
+                <div class="form-row">
+                  <label class="form-label">Min ON Power (W)</label>
+                  <div class="form-input-wrapper">
+                    <div style="display: flex; align-items: center; gap: 1rem;">
+                      <input 
+                        type="range" 
+                        id="gsp-threshold-pos" 
+                        v-model.number="detectorSettings.gspConfig.T_Positive" 
+                        min="10" 
+                        max="100" 
+                        step="10"
+                        @change="saveDetectorSettings"
+                        style="flex: 1;"
+                      />
+                      <span class="config-value">{{ detectorSettings.gspConfig.T_Positive }}</span>
+                    </div>
+                    <span class="form-hint">Minimum power increase to detect appliance turning on</span>
                   </div>
-                  <div class="form-group">
-                    <label for="gsp-threshold-neg">Min OFF Power (W):</label>
-                    <input 
-                      type="range" 
-                      id="gsp-threshold-neg" 
-                      v-model.number="detectorSettings.gspConfig.T_Negative" 
-                      min="-100" 
-                      max="-10" 
-                      step="10"
-                      @change="saveDetectorSettings"
-                    />
-                    <span class="config-value">{{ detectorSettings.gspConfig.T_Negative }}</span>
+                </div>
+                <div class="form-row">
+                  <label class="form-label">Min OFF Power (W)</label>
+                  <div class="form-input-wrapper">
+                    <div style="display: flex; align-items: center; gap: 1rem;">
+                      <input 
+                        type="range" 
+                        id="gsp-threshold-neg" 
+                        v-model.number="detectorSettings.gspConfig.T_Negative" 
+                        min="-100" 
+                        max="-10" 
+                        step="10"
+                        @change="saveDetectorSettings"
+                        style="flex: 1;"
+                      />
+                      <span class="config-value">{{ detectorSettings.gspConfig.T_Negative }}</span>
+                    </div>
+                    <span class="form-hint">Minimum power decrease to detect appliance turning off</span>
                   </div>
-                  <div class="form-group">
-                    <label for="gsp-instances">Min Activations:</label>
-                    <input 
-                      type="range" 
-                      id="gsp-instances" 
-                      v-model.number="detectorSettings.gspConfig.instancelimit" 
-                      min="2" 
-                      max="10" 
-                      step="1"
-                      @change="saveDetectorSettings"
-                    />
-                    <span class="config-value">{{ detectorSettings.gspConfig.instancelimit }}</span>
+                </div>
+                <div class="form-row">
+                  <label class="form-label">Min Activations</label>
+                  <div class="form-input-wrapper">
+                    <div style="display: flex; align-items: center; gap: 1rem;">
+                      <input 
+                        type="range" 
+                        id="gsp-instances" 
+                        v-model.number="detectorSettings.gspConfig.instancelimit" 
+                        min="2" 
+                        max="10" 
+                        step="1"
+                        @change="saveDetectorSettings"
+                        style="flex: 1;"
+                      />
+                      <span class="config-value">{{ detectorSettings.gspConfig.instancelimit }}</span>
+                    </div>
+                    <span class="form-hint">Minimum number of times an appliance must be detected</span>
                   </div>
                 </div>
               </div>
@@ -349,66 +404,104 @@
 
           <!-- Service Settings -->
           <div v-show="settingsTab === 'service'" class="settings-content">
-            <h2>Service Settings</h2>
-            <div class="settings-section">
-              <h3>Automatic Background Predictions</h3>
-              <div class="form-group">
-                <label>
-                  <input type="checkbox" v-model="detectorSettings.autoRunEnabled" @change="saveDetectorSettings" />
-                  Enable automatic predictions every hour
-                </label>
-                <p class="form-hint">Backend runs predictions and updates sensors automatically without UI</p>
+            <div class="settings-group">
+              <div class="group-header">
+                <h3>Background Services</h3>
+                <p class="group-description">Configure automated background tasks and predictions</p>
+              </div>
+              <div class="group-body">
+                <div class="form-row-check">
+                  <label class="checkbox-label">
+                    <input type="checkbox" v-model="detectorSettings.autoRunEnabled" @change="saveDetectorSettings" />
+                    <span class="checkbox-text">
+                      <strong>Enable automatic predictions every hour</strong>
+                      <span class="checkbox-hint">Backend runs predictions and updates sensors automatically without UI interaction</span>
+                    </span>
+                  </label>
+                </div>
               </div>
             </div>
           </div>
 
           <!-- Home Assistant Settings -->
           <div v-show="settingsTab === 'homeassistant'" class="settings-content">
-            <h2>Home Assistant Settings</h2>
-            <div v-if="!connected" class="info-banner">
-              ⚠️ Not connected to Home Assistant. Please enter your connection details below and click Reconnect.
+            
+            <div v-if="!connected" class="alert-banner warning">
+              <span class="alert-icon">⚠️</span>
+              <div class="alert-content">
+                <strong>Not Connected</strong>
+                <p>Please enter your connection details below and click Connect.</p>
+              </div>
             </div>
-            <div class="settings-section">
-              <h3>Connection</h3>
-              <div class="form-group">
-                <label>Home Assistant URL:</label>
-                <input 
-                  v-model="settings.haUrl" 
-                  type="text" 
-                  placeholder="http://homeassistant.local:8123"
-                  @change="saveSettings"
-                />
+            
+            <div class="settings-group">
+              <div class="group-header">
+                <h3>Connection Configuration</h3>
+                <p class="group-description">Configure your Home Assistant connection parameters</p>
               </div>
-              <div class="form-group">
-                <label>Access Token:</label>
-                <input 
-                  v-model="settings.haToken" 
-                  type="password" 
-                  placeholder="Your long-lived access token"
-                  @change="saveSettings"
-                />
+              <div class="group-body">
+                <div class="form-row">
+                  <label class="form-label">Home Assistant URL</label>
+                  <div class="form-input-wrapper">
+                    <input 
+                      v-model="settings.haUrl" 
+                      type="text" 
+                      class="form-input"
+                      placeholder="http://homeassistant.local:8123"
+                      @change="saveSettings"
+                    />
+                    <span class="form-hint">The base URL of your Home Assistant instance</span>
+                  </div>
+                </div>
+                <div class="form-row">
+                  <label class="form-label">Access Token</label>
+                  <div class="form-input-wrapper">
+                    <input 
+                      v-model="settings.haToken" 
+                      type="password" 
+                      class="form-input"
+                      placeholder="Your long-lived access token"
+                      @change="saveSettings"
+                    />
+                    <span class="form-hint">Long-lived access token from your profile</span>
+                  </div>
+                </div>
+                <div class="form-row">
+                  <label class="form-label">Power Entity ID</label>
+                  <div class="form-input-wrapper">
+                    <input 
+                      v-model="settings.entityId" 
+                      type="text" 
+                      class="form-input"
+                      placeholder="sensor.power_consumption"
+                      @change="saveSettings"
+                    />
+                    <span class="form-hint">Entity ID of your power consumption sensor</span>
+                  </div>
+                </div>
               </div>
-              <div class="form-group">
-                <label>Power Entity ID:</label>
-                <input 
-                  v-model="settings.entityId" 
-                  type="text" 
-                  placeholder="sensor.power_consumption"
-                  @change="saveSettings"
-                />
+              <div class="group-footer">
+                <button @click="reconnect" class="btn-primary" :disabled="!settings.haUrl || !settings.haToken">
+                  <span v-if="!connected">🔌 Connect</span>
+                  <span v-else>🔄 Reconnect</span>
+                </button>
               </div>
-              <button @click="reconnect" class="btn-primary">
-                Reconnect
-              </button>
             </div>
-            <div class="settings-section">
-              <h3>Detector Integration</h3>
-              <div class="form-group">
-                <label>
-                  <input type="checkbox" v-model="detectorSettings.autoSyncToHA" @change="saveDetectorSettings" />
-                  Auto-sync predicted power to Home Assistant sensors
-                </label>
-                <p class="form-hint">Creates p_&lt;appliance&gt; sensors with accumulated daily energy (Wh) for energy dashboard</p>
+            <div class="settings-group">
+              <div class="group-header">
+                <h3>Detector Integration</h3>
+                <p class="group-description">Configure power detector synchronization with Home Assistant</p>
+              </div>
+              <div class="group-body">
+                <div class="form-row-check">
+                  <label class="checkbox-label">
+                    <input type="checkbox" v-model="detectorSettings.autoSyncToHA" @change="saveDetectorSettings" />
+                    <span class="checkbox-text">
+                      <strong>Auto-sync predicted power to Home Assistant sensors</strong>
+                      <span class="checkbox-hint">Creates p_&lt;appliance&gt; sensors with accumulated daily energy (Wh) for energy dashboard</span>
+                    </span>
+                  </label>
+                </div>
               </div>
             </div>
           </div>
@@ -675,6 +768,9 @@ const connect = async () => {
     
     // Update settings on backend
     await saveSettingsToBackend()
+    
+    // Show success toast
+    showToast('Successfully connected to Home Assistant', 'success')
     
     // Load data
     await loadData()
@@ -1209,8 +1305,12 @@ const reconnect = async () => {
   haToken.value = settings.value.haToken
   entityId.value = settings.value.entityId
   
+  // Save to localStorage and backend first
+  await saveSettings()
+  
   // Disconnect and reconnect
   connected.value = false
+  sessionId.value = ''
   await connect()
 }
 
@@ -2127,6 +2227,196 @@ const exportCurrentDay = async () => {
   font-size: 1.1rem;
 }
 
+/* Professional groupbox styling */
+.settings-group {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  margin-bottom: 2rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+}
+
+.group-header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.group-header h3 {
+  margin: 0 0 0.25rem 0;
+  color: #fff;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.group-description {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.9rem;
+}
+
+.group-body {
+  padding: 1.5rem;
+}
+
+.group-footer {
+  padding: 1rem 1.5rem;
+  background: #f8f9fa;
+  border-top: 1px solid #e0e0e0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 1.5rem;
+  align-items: start;
+  margin-bottom: 1.5rem;
+}
+
+.form-row:last-child {
+  margin-bottom: 0;
+}
+
+.form-label {
+  font-weight: 600;
+  color: #2c3e50;
+  padding-top: 0.75rem;
+  text-align: right;
+  font-size: 0.95rem;
+}
+
+.form-input-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.form-input {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  transition: all 0.2s;
+  background: #fff;
+  color: #2c3e50;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.form-row-check {
+  margin-bottom: 1rem;
+}
+
+.form-row-check:last-child {
+  margin-bottom: 0;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: start;
+  gap: 0.75rem;
+  cursor: pointer;
+  padding: 1rem;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.checkbox-label:hover {
+  background: #f8f9fa;
+}
+
+.checkbox-label input[type="checkbox"] {
+  margin-top: 0.25rem;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.checkbox-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.checkbox-text strong {
+  color: #2c3e50;
+  font-weight: 600;
+}
+
+.checkbox-hint {
+  color: #6c757d;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.alert-banner {
+  padding: 1rem 1.25rem;
+  border-radius: 6px;
+  margin-bottom: 1.5rem;
+  display: flex;
+  gap: 1rem;
+  align-items: start;
+}
+
+.alert-banner.warning {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+}
+
+.alert-banner.success {
+  background: #d4edda;
+  border: 1px solid #28a745;
+}
+
+.alert-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.alert-content {
+  flex: 1;
+}
+
+.alert-content strong {
+  display: block;
+  margin-bottom: 0.25rem;
+  color: #2c3e50;
+  font-weight: 600;
+}
+
+.alert-content p {
+  margin: 0;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.settings-content .btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .form-row {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+  
+  .form-label {
+    text-align: left;
+    padding-top: 0;
+  }
+}
+
 .settings-content .form-group {
   margin-bottom: 1.5rem;
 }
@@ -2146,6 +2436,15 @@ const exportCurrentDay = async () => {
   border: 1px solid #ddd;
   border-radius: 4px;
   font-size: 1rem;
+  transition: all 0.2s;
+}
+
+.settings-content .form-group input[type="text"]:focus,
+.settings-content .form-group input[type="password"]:focus,
+.settings-content .form-group select:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
 }
 
 .settings-content .form-group input[type="checkbox"] {
