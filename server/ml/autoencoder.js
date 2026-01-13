@@ -222,51 +222,86 @@ export class PowerAutoencoder {
     const normalized = powerCurve.map(val => (val - this.stats.mean) / (this.stats.std || 1))
     
     // If curve is shorter than sequence length, pad with zeros
-    let inputSequence = normalized
-    if (inputSequence.length < this.sequenceLength) {
-      inputSequence = [...normalized, ...Array(this.sequenceLength - normalized.length).fill(0)]
-    } else if (inputSequence.length > this.sequenceLength) {
-      // Take the middle part
-      const start = Math.floor((inputSequence.length - this.sequenceLength) / 2)
-      inputSequence = inputSequence.slice(start, start + this.sequenceLength)
+    if (normalized.length < this.sequenceLength) {
+      const padded = [...normalized, ...Array(this.sequenceLength - normalized.length).fill(0)]
+      const inputTensor = tf.tensor3d([padded.map(val => [val])])
+      const reconstructedTensor = this.model.predict(inputTensor)
+      const reconstructedData = await reconstructedTensor.data()
+      
+      const error = tf.losses.meanSquaredError(inputTensor, reconstructedTensor)
+      const errorValue = (await error.data())[0]
+      
+      // Denormalize only the valid part (non-padded)
+      const reconstructedArray = Array.from(reconstructedData)
+        .slice(0, normalized.length)
+        .map(val => val * (this.stats.std || 1) + this.stats.mean)
+      
+      inputTensor.dispose()
+      reconstructedTensor.dispose()
+      error.dispose()
+      
+      return {
+        isAnomaly: errorValue > threshold,
+        reconstructionError: errorValue,
+        anomalyScore: errorValue,
+        threshold,
+        original: powerCurve,
+        reconstructed: reconstructedArray,
+        details: errorValue > threshold 
+          ? `High reconstruction error (${errorValue.toFixed(4)}) indicates anomalous pattern`
+          : `Normal pattern (error: ${errorValue.toFixed(4)})`
+      }
     }
     
-    // Create tensor
-    const inputTensor = tf.tensor3d([inputSequence.map(val => [val])])
+    // For longer curves, process with sliding window and reconstruct full curve
+    const stride = Math.floor(this.sequenceLength / 4) // 25% overlap
+    const reconstructedFull = new Array(normalized.length).fill(0)
+    const counts = new Array(normalized.length).fill(0)
+    let totalError = 0
+    let numWindows = 0
     
-    // Get reconstruction
-    const reconstructed = this.model.predict(inputTensor)
+    for (let i = 0; i <= normalized.length - this.sequenceLength; i += stride) {
+      const window = normalized.slice(i, i + this.sequenceLength)
+      const inputTensor = tf.tensor3d([window.map(val => [val])])
+      const reconstructedTensor = this.model.predict(inputTensor)
+      
+      const error = tf.losses.meanSquaredError(inputTensor, reconstructedTensor)
+      const errorValue = (await error.data())[0]
+      totalError += errorValue
+      numWindows++
+      
+      const reconstructedData = await reconstructedTensor.data()
+      
+      // Add to full reconstruction with overlap averaging
+      for (let j = 0; j < this.sequenceLength; j++) {
+        reconstructedFull[i + j] += reconstructedData[j]
+        counts[i + j]++
+      }
+      
+      inputTensor.dispose()
+      reconstructedTensor.dispose()
+      error.dispose()
+    }
     
-    // Calculate reconstruction error (MSE)
-    const error = tf.losses.meanSquaredError(inputTensor, reconstructed)
-    const reconstructionError = await error.data()
-    const errorValue = reconstructionError[0]
+    // Average overlapping predictions and denormalize
+    const reconstructedArray = reconstructedFull.map((sum, idx) => {
+      const avg = sum / (counts[idx] || 1)
+      return avg * (this.stats.std || 1) + this.stats.mean
+    })
     
-    // Calculate anomaly score (how many standard deviations from normal)
-    const anomalyScore = errorValue
-    const isAnomaly = anomalyScore > threshold
-    
-    // Get reconstructed values for visualization
-    const reconstructedData = await reconstructed.data()
-    const reconstructedArray = Array.from(reconstructedData)
-      .filter((_, idx) => idx % 1 === 0) // Extract every point
-      .map(val => val * (this.stats.std || 1) + this.stats.mean) // Denormalize
-    
-    // Cleanup
-    inputTensor.dispose()
-    reconstructed.dispose()
-    error.dispose()
+    const avgError = totalError / numWindows
+    const isAnomaly = avgError > threshold
     
     return {
       isAnomaly,
-      reconstructionError: errorValue,
-      anomalyScore,
+      reconstructionError: avgError,
+      anomalyScore: avgError,
       threshold,
       original: powerCurve,
-      reconstructed: reconstructedArray.slice(0, powerCurve.length),
+      reconstructed: reconstructedArray,
       details: isAnomaly 
-        ? `High reconstruction error (${errorValue.toFixed(4)}) indicates anomalous pattern`
-        : `Normal pattern (error: ${errorValue.toFixed(4)})`
+        ? `High reconstruction error (${avgError.toFixed(4)}) indicates anomalous pattern`
+        : `Normal pattern (error: ${avgError.toFixed(4)})`
     }
   }
 

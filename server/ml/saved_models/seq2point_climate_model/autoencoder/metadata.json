@@ -1,0 +1,8 @@
+{
+  "stats": {
+    "mean": 1391.437387476457,
+    "std": 459.28605052551075
+  },
+  "sequenceLength": 60,
+  "latentDim": 8
+}

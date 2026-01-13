@@ -353,7 +353,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { format } from 'date-fns'
 
 const props = defineProps({
@@ -445,15 +445,23 @@ const loadTags = async () => {
     const data = await response.json()
     availableTags.value = data.tags || []
     trainedModels.value = data.availableModels || []
+    console.log('Loaded tags:', availableTags.value)
+    console.log('Trained models:', trainedModels.value)
   } catch (err) {
     error.value = `Failed to load tags: ${err.message}`
   }
 }
 
 const retrainModel = () => {
+  // Clear the trained model flag to show training UI
   trainedModels.value = trainedModels.value.filter(t => t !== selectedTag.value)
+  // Clear analysis results
   anomalyResults.value = []
   selectedWindow.value = null
+  error.value = ''
+  successMessage.value = ''
+  // Reset training dates to defaults
+  trainingDates.value = [format(new Date(), 'yyyy-MM-dd')]
 }
 
 const trainAutoencoder = async () => {
@@ -484,7 +492,10 @@ const trainAutoencoder = async () => {
     }
 
     const data = await response.json()
-    trainedModels.value.push(selectedTag.value)
+    
+    // Reload tags from server to get updated trained models list
+    await loadTags()
+    
     successMessage.value = `✅ ${data.message}`
     
     setTimeout(() => {
@@ -661,6 +672,14 @@ const getTimelineCurvePath = (result) => {
 // Lifecycle
 onMounted(() => {
   if (props.sessionId) {
+    loadTags()
+  }
+})
+
+// Watch for sessionId changes
+watch(() => props.sessionId, (newSessionId, oldSessionId) => {
+  if (newSessionId && newSessionId !== oldSessionId) {
+    console.log('Session ID changed, reloading tags...')
     loadTags()
   }
 })

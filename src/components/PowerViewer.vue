@@ -177,7 +177,11 @@
 
       <!-- Power Detector Tab -->
       <div v-show="activeTab === 'detector'" class="tab-content">
-        <PowerDetector :sessionId="sessionId" />
+        <PowerDetector 
+          :sessionId="sessionId" 
+          :detectorSettings="detectorSettings"
+          @update:detectorSettings="detectorSettings = $event; saveDetectorSettings()"
+        />
       </div>
 
       <!-- Anomaly Detector Tab -->
@@ -206,6 +210,18 @@
             >
               Home Assistant
             </button>
+            <button 
+              :class="['settings-tab-btn', { active: settingsTab === 'detector' }]"
+              @click="settingsTab = 'detector'"
+            >
+              Detector
+            </button>
+            <button 
+              :class="['settings-tab-btn', { active: settingsTab === 'service' }]"
+              @click="settingsTab = 'service'"
+            >
+              Service
+            </button>
           </div>
 
           <!-- General Settings -->
@@ -215,7 +231,7 @@
               <h3>Application</h3>
               <div class="form-group">
                 <label>Default View:</label>
-                <select v-model="settings.defaultView">
+                <select v-model="settings.defaultView" @change="saveSettings">
                   <option value="detector">Power Detector</option>
                   <option value="libraries">Libraries</option>
                   <option value="ml">ML Trainer</option>
@@ -225,9 +241,123 @@
               </div>
               <div class="form-group">
                 <label>
-                  <input type="checkbox" v-model="settings.autoLoadData" />
+                  <input type="checkbox" v-model="settings.autoLoadData" @change="saveSettings" />
                   Auto-connect to Home Assistant on startup
                 </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Detector Settings -->
+          <div v-show="settingsTab === 'detector'" class="settings-content">
+            <h2>Detector Settings</h2>
+            <div class="settings-section">
+              <h3>Detection</h3>
+              <div class="form-group">
+                <label for="threshold">Detection Threshold:</label>
+                <input 
+                  type="range" 
+                  id="threshold" 
+                  v-model.number="detectorSettings.threshold" 
+                  min="0.1" 
+                  max="0.7" 
+                  step="0.05"
+                  @change="saveDetectorSettings"
+                />
+                <span class="config-value">{{ (detectorSettings.threshold * 100).toFixed(0) }}%</span>
+                <span class="config-hint">Higher = fewer false positives</span>
+              </div>
+            </div>
+
+            <div class="settings-section">
+              <h3>Disaggregation Method</h3>
+              <div class="form-group">
+                <label>
+                  <input type="checkbox" v-model="detectorSettings.useSeq2Point" @change="saveDetectorSettings" />
+                  Enable Seq2Point energy disaggregation
+                </label>
+                <p class="form-hint">Supervised ML - requires training per appliance</p>
+              </div>
+              
+              <div class="form-group">
+                <label>
+                  <input type="checkbox" v-model="detectorSettings.useGSP" @change="saveDetectorSettings" />
+                  Enable GSP energy disaggregation
+                </label>
+                <p class="form-hint">Training-less - auto-discovers all appliances</p>
+              </div>
+
+              <div v-if="detectorSettings.useGSP" class="form-group">
+                <h4>GSP Configuration</h4>
+                <div class="gsp-config">
+                  <div class="form-group">
+                    <label for="gsp-sigma">Clustering Sensitivity (σ):</label>
+                    <input 
+                      type="range" 
+                      id="gsp-sigma" 
+                      v-model.number="detectorSettings.gspConfig.sigma" 
+                      min="5" 
+                      max="50" 
+                      step="5"
+                      @change="saveDetectorSettings"
+                    />
+                    <span class="config-value">{{ detectorSettings.gspConfig.sigma }}</span>
+                  </div>
+                  <div class="form-group">
+                    <label for="gsp-threshold-pos">Min ON Power (W):</label>
+                    <input 
+                      type="range" 
+                      id="gsp-threshold-pos" 
+                      v-model.number="detectorSettings.gspConfig.T_Positive" 
+                      min="10" 
+                      max="100" 
+                      step="10"
+                      @change="saveDetectorSettings"
+                    />
+                    <span class="config-value">{{ detectorSettings.gspConfig.T_Positive }}</span>
+                  </div>
+                  <div class="form-group">
+                    <label for="gsp-threshold-neg">Min OFF Power (W):</label>
+                    <input 
+                      type="range" 
+                      id="gsp-threshold-neg" 
+                      v-model.number="detectorSettings.gspConfig.T_Negative" 
+                      min="-100" 
+                      max="-10" 
+                      step="10"
+                      @change="saveDetectorSettings"
+                    />
+                    <span class="config-value">{{ detectorSettings.gspConfig.T_Negative }}</span>
+                  </div>
+                  <div class="form-group">
+                    <label for="gsp-instances">Min Activations:</label>
+                    <input 
+                      type="range" 
+                      id="gsp-instances" 
+                      v-model.number="detectorSettings.gspConfig.instancelimit" 
+                      min="2" 
+                      max="10" 
+                      step="1"
+                      @change="saveDetectorSettings"
+                    />
+                    <span class="config-value">{{ detectorSettings.gspConfig.instancelimit }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Service Settings -->
+          <div v-show="settingsTab === 'service'" class="settings-content">
+            <h2>Service Settings</h2>
+            <div class="settings-section">
+              <h3>Automatic Background Predictions</h3>
+              <div class="form-group">
+                <label>
+                  <input type="checkbox" v-model="detectorSettings.autoRunEnabled" @change="saveDetectorSettings" />
+                  Enable automatic predictions every hour
+                </label>
+                <p class="form-hint">Backend runs predictions and updates sensors automatically without UI</p>
               </div>
             </div>
           </div>
@@ -270,6 +400,16 @@
               <button @click="reconnect" class="btn-primary">
                 Reconnect
               </button>
+            </div>
+            <div class="settings-section">
+              <h3>Detector Integration</h3>
+              <div class="form-group">
+                <label>
+                  <input type="checkbox" v-model="detectorSettings.autoSyncToHA" @change="saveDetectorSettings" />
+                  Auto-sync predicted power to Home Assistant sensors
+                </label>
+                <p class="form-hint">Creates p_&lt;appliance&gt; sensors with accumulated daily energy (Wh) for energy dashboard</p>
+              </div>
             </div>
           </div>
         </div>
@@ -318,7 +458,7 @@ const error = ref('')
 const loading = ref(false)
 
 // Tab management
-const activeTab = ref('detector')
+const activeTab = ref(localStorage.getItem('defaultView') || 'detector')
 const settingsTab = ref('general')
 
 // Settings state
@@ -328,6 +468,24 @@ const settings = ref({
   haUrl: localStorage.getItem('haUrl') || '',
   haToken: localStorage.getItem('haToken') || '',
   entityId: localStorage.getItem('entityId') || 'sensor.power_consumption'
+})
+
+// Detector settings
+const detectorSettings = ref({
+  threshold: parseFloat(localStorage.getItem('detectorThreshold')) || 0.25,
+  useSeq2Point: localStorage.getItem('detectorUseSeq2Point') !== 'false', // default true
+  useGSP: localStorage.getItem('detectorUseGSP') === 'true', // default false
+  gspConfig: {
+    sigma: parseInt(localStorage.getItem('detectorGspSigma')) || 20,
+    ri: 0.15,
+    T_Positive: parseInt(localStorage.getItem('detectorGspTPositive')) || 20,
+    T_Negative: parseInt(localStorage.getItem('detectorGspTNegative')) || -20,
+    alpha: 0.5,
+    beta: 0.5,
+    instancelimit: parseInt(localStorage.getItem('detectorGspInstanceLimit')) || 3
+  },
+  autoSyncToHA: localStorage.getItem('autoSyncToHA') === 'true',
+  autoRunEnabled: localStorage.getItem('autoRunEnabled') === 'true'
 })
 
 // Sidebar state
@@ -1006,6 +1164,22 @@ const saveSettings = async () => {
   showToast('Settings saved', 'success')
 }
 
+const saveDetectorSettings = async () => {
+  localStorage.setItem('detectorThreshold', detectorSettings.value.threshold)
+  localStorage.setItem('detectorUseSeq2Point', detectorSettings.value.useSeq2Point)
+  localStorage.setItem('detectorUseGSP', detectorSettings.value.useGSP)
+  localStorage.setItem('detectorGspSigma', detectorSettings.value.gspConfig.sigma)
+  localStorage.setItem('detectorGspTPositive', detectorSettings.value.gspConfig.T_Positive)
+  localStorage.setItem('detectorGspTNegative', detectorSettings.value.gspConfig.T_Negative)
+  localStorage.setItem('detectorGspInstanceLimit', detectorSettings.value.gspConfig.instancelimit)
+  localStorage.setItem('autoSyncToHA', detectorSettings.value.autoSyncToHA)
+  localStorage.setItem('autoRunEnabled', detectorSettings.value.autoRunEnabled)
+  
+  // Save to backend
+  await saveSettingsToBackend()
+  showToast('Detector settings saved', 'success')
+}
+
 const saveSettingsToBackend = async () => {
   try {
     await fetch('http://localhost:3001/api/settings', {
@@ -1018,7 +1192,10 @@ const saveSettingsToBackend = async () => {
         haUrl: settings.value.haUrl,
         haToken: settings.value.haToken,
         entityId: settings.value.entityId,
-        autoConnect: settings.value.autoLoadData
+        autoConnect: settings.value.autoLoadData,
+        defaultView: settings.value.defaultView,
+        autoLoadData: settings.value.autoLoadData,
+        detector: detectorSettings.value
       })
     })
   } catch (err) {
@@ -1037,6 +1214,93 @@ const reconnect = async () => {
   await connect()
 }
 
+const loadSettingsFromBackend = async () => {
+  try {
+    const response = await fetch('http://localhost:3001/api/settings', {
+      headers: { 
+        'Authorization': `Bearer ${sessionToken.value}`
+      }
+    })
+    
+    if (response.ok) {
+      const data = await response.json()
+      
+      // Update general settings
+      if (data.haUrl !== undefined) {
+        settings.value.haUrl = data.haUrl
+        haUrl.value = data.haUrl
+        localStorage.setItem('haUrl', data.haUrl)
+      }
+      if (data.haToken !== undefined) {
+        settings.value.haToken = data.haToken
+        haToken.value = data.haToken
+        localStorage.setItem('haToken', data.haToken)
+      }
+      if (data.entityId !== undefined) {
+        settings.value.entityId = data.entityId
+        entityId.value = data.entityId
+        localStorage.setItem('entityId', data.entityId)
+      }
+      if (data.autoLoadData !== undefined) {
+        settings.value.autoLoadData = data.autoLoadData
+        localStorage.setItem('autoLoadData', data.autoLoadData)
+      }
+      if (data.defaultView !== undefined) {
+        settings.value.defaultView = data.defaultView
+        localStorage.setItem('defaultView', data.defaultView)
+      }
+      
+      // Update detector settings
+      if (data.detector) {
+        if (data.detector.threshold !== undefined) {
+          detectorSettings.value.threshold = data.detector.threshold
+          localStorage.setItem('detectorThreshold', data.detector.threshold)
+        }
+        if (data.detector.useSeq2Point !== undefined) {
+          detectorSettings.value.useSeq2Point = data.detector.useSeq2Point
+          localStorage.setItem('detectorUseSeq2Point', data.detector.useSeq2Point)
+        }
+        if (data.detector.useGSP !== undefined) {
+          detectorSettings.value.useGSP = data.detector.useGSP
+          localStorage.setItem('detectorUseGSP', data.detector.useGSP)
+        }
+        if (data.detector.autoSyncToHA !== undefined) {
+          detectorSettings.value.autoSyncToHA = data.detector.autoSyncToHA
+          localStorage.setItem('autoSyncToHA', data.detector.autoSyncToHA)
+        }
+        if (data.detector.autoRunEnabled !== undefined) {
+          detectorSettings.value.autoRunEnabled = data.detector.autoRunEnabled
+          localStorage.setItem('autoRunEnabled', data.detector.autoRunEnabled)
+        }
+        if (data.detector.gspConfig) {
+          if (data.detector.gspConfig.sigma !== undefined) {
+            detectorSettings.value.gspConfig.sigma = data.detector.gspConfig.sigma
+            localStorage.setItem('detectorGspSigma', data.detector.gspConfig.sigma)
+          }
+          if (data.detector.gspConfig.T_Positive !== undefined) {
+            detectorSettings.value.gspConfig.T_Positive = data.detector.gspConfig.T_Positive
+            localStorage.setItem('detectorGspTPositive', data.detector.gspConfig.T_Positive)
+          }
+          if (data.detector.gspConfig.T_Negative !== undefined) {
+            detectorSettings.value.gspConfig.T_Negative = data.detector.gspConfig.T_Negative
+            localStorage.setItem('detectorGspTNegative', data.detector.gspConfig.T_Negative)
+          }
+          if (data.detector.gspConfig.instancelimit !== undefined) {
+            detectorSettings.value.gspConfig.instancelimit = data.detector.gspConfig.instancelimit
+            localStorage.setItem('detectorGspInstanceLimit', data.detector.gspConfig.instancelimit)
+          }
+        }
+      }
+      
+      console.log('✅ Settings loaded from backend')
+      return true
+    }
+  } catch (err) {
+    console.error('Failed to load settings from backend:', err)
+  }
+  return false
+}
+
 // Check for existing session on mount
 if (sessionToken.value) {
   fetch('http://localhost:3001/api/auth/verify', {
@@ -1045,12 +1309,16 @@ if (sessionToken.value) {
     body: JSON.stringify({ sessionToken: sessionToken.value })
   })
   .then(res => res.json())
-  .then(data => {
+  .then(async data => {
     if (data.success) {
       authenticated.value = true
       loginUsername.value = localStorage.getItem('loggedInUser') || 'User'
-      // Load settings
-      if (data.settings) {
+      
+      // Load settings from backend
+      const loaded = await loadSettingsFromBackend()
+      
+      // Fallback to data.settings if loadSettingsFromBackend failed
+      if (!loaded && data.settings) {
         haUrl.value = data.settings.haUrl || ''
         haToken.value = data.settings.haToken || ''
         entityId.value = data.settings.entityId || 'sensor.power_consumption'
@@ -1065,6 +1333,24 @@ if (sessionToken.value) {
           // Show settings tab if not auto-connecting
           activeTab.value = 'settings'
           settingsTab.value = 'homeassistant'
+        }
+      } else if (loaded) {
+        // Settings loaded from backend, check if auto-connect
+        if (settings.value.autoLoadData && haUrl.value && haToken.value) {
+          connect()
+          // Apply default view after connection
+          if (settings.value.defaultView) {
+            activeTab.value = settings.value.defaultView
+          }
+        } else if (!haUrl.value || !haToken.value) {
+          // Show settings tab if not configured
+          activeTab.value = 'settings'
+          settingsTab.value = 'homeassistant'
+        } else {
+          // Apply default view if configured but not auto-connecting
+          if (settings.value.defaultView) {
+            activeTab.value = settings.value.defaultView
+          }
         }
       } else {
         // No settings, show settings tab
@@ -1435,8 +1721,8 @@ const exportCurrentDay = async () => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(255, 255, 255, 0.45);
-  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(4px);
   pointer-events: none;
   z-index: 0;
 }
@@ -1865,6 +2151,33 @@ const exportCurrentDay = async () => {
 .settings-content .form-group input[type="checkbox"] {
   margin-right: 0.5rem;
   cursor: pointer;
+}
+
+.settings-content .form-group input[type="range"] {
+  width: 100%;
+  cursor: pointer;
+}
+
+.settings-content .config-value {
+  font-weight: 600;
+  color: #3498db;
+  margin-left: 0.5rem;
+}
+
+.settings-content .config-hint,
+.settings-content .form-hint {
+  font-size: 0.85rem;
+  color: #95a5a6;
+  font-style: italic;
+  margin-top: 0.25rem;
+}
+
+.settings-content .gsp-config {
+  padding: 1rem;
+  background: #f8f9fa;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+  margin-top: 0.5rem;
 }
 
 .settings-content .btn-primary {

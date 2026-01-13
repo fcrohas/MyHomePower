@@ -19,185 +19,6 @@
       >
         🔄 Analyze
       </button>
-      <button 
-        @click="showSettingsDialog = true" 
-        class="btn-settings"
-        title="Advanced Settings"
-      >
-        ⚙️ Settings
-      </button>
-    </div>
-
-    <!-- Settings Dialog -->
-    <div v-if="showSettingsDialog" class="dialog-overlay" @click.self="showSettingsDialog = false">
-      <div class="dialog-content">
-        <div class="dialog-header">
-          <h3>⚙️ Advanced Settings</h3>
-          <button class="close-btn" @click="showSettingsDialog = false">✕</button>
-        </div>
-        <div class="dialog-body">
-          <div class="config-item">
-            <label for="threshold">Detection Threshold:</label>
-            <input 
-              type="range" 
-              id="threshold" 
-              v-model.number="threshold" 
-              min="0.1" 
-              max="0.7" 
-              step="0.05"
-            />
-            <span class="config-value">{{ (threshold * 100).toFixed(0) }}%</span>
-            <span class="config-hint">Higher = fewer false positives</span>
-          </div>
-          <div class="config-item">
-            <h4 class="section-title">Disaggregation Method</h4>
-          </div>
-          <div class="config-item checkbox">
-            <label>
-              <input type="checkbox" v-model="useSeq2Point" @change="onMethodChange" />
-              Enable Seq2Point energy disaggregation
-            </label>
-            <span class="config-hint-inline">Supervised ML - requires training per appliance</span>
-          </div>
-          <div v-if="useSeq2Point" class="config-item">
-            <label>Seq2Point Models to Analyze:</label>
-            <div v-if="loadingModels" class="config-hint">Loading models...</div>
-            <div v-else-if="seq2pointModels.length === 0" class="config-hint">
-              Train a seq2point model first using: node server/ml/seq2point-train.js "appliance_name"
-            </div>
-            <div v-else class="model-checkboxes">
-              <label v-for="model in seq2pointModels" :key="model" class="checkbox-label">
-                <input 
-                  type="checkbox" 
-                  :value="model" 
-                  v-model="selectedSeq2PointModels"
-                />
-                <span>{{ model }}</span>
-              </label>
-            </div>
-          </div>
-          
-          <div class="config-item checkbox">
-            <label>
-              <input type="checkbox" v-model="useGSP" @change="onMethodChange" />
-              Enable GSP energy disaggregation
-            </label>
-            <span class="config-hint-inline">Training-less - auto-discovers all appliances</span>
-          </div>
-          <div v-if="useGSP" class="config-item">
-            <label>GSP Configuration:</label>
-            <div class="gsp-config">
-              <div class="gsp-param">
-                <label for="gsp-sigma">Clustering Sensitivity (σ):</label>
-                <input 
-                  type="range" 
-                  id="gsp-sigma" 
-                  v-model.number="gspConfig.sigma" 
-                  min="5" 
-                  max="50" 
-                  step="5"
-                />
-                <span class="config-value">{{ gspConfig.sigma }}</span>
-              </div>
-              <div class="gsp-param">
-                <label for="gsp-threshold-pos">Min ON Power (W):</label>
-                <input 
-                  type="range" 
-                  id="gsp-threshold-pos" 
-                  v-model.number="gspConfig.T_Positive" 
-                  min="10" 
-                  max="100" 
-                  step="10"
-                />
-                <span class="config-value">{{ gspConfig.T_Positive }}</span>
-              </div>
-              <div class="gsp-param">
-                <label for="gsp-threshold-neg">Min OFF Power (W):</label>
-                <input 
-                  type="range" 
-                  id="gsp-threshold-neg" 
-                  v-model.number="gspConfig.T_Negative" 
-                  min="-100" 
-                  max="-10" 
-                  step="10"
-                />
-                <span class="config-value">{{ gspConfig.T_Negative }}</span>
-              </div>
-              <div class="gsp-param">
-                <label for="gsp-instances">Min Activations:</label>
-                <input 
-                  type="range" 
-                  id="gsp-instances" 
-                  v-model.number="gspConfig.instancelimit" 
-                  min="2" 
-                  max="10" 
-                  step="1"
-                />
-                <span class="config-value">{{ gspConfig.instancelimit }}</span>
-              </div>
-            </div>
-          </div>
-          
-          <div class="config-item checkbox section-divider">
-            <h4 class="section-title">🏠 Home Assistant Integration</h4>
-          </div>
-          <div class="config-item checkbox">
-            <label>
-              <input type="checkbox" v-model="autoSyncToHA" @change="onAutoSyncChange" />
-              Auto-sync predicted power to Home Assistant sensors
-            </label>
-            <span class="config-hint-inline">
-              Creates p_&lt;appliance&gt; sensors with accumulated daily energy (Wh) for energy dashboard
-            </span>
-          </div>
-          <div v-if="autoSyncToHA && lastSyncTime" class="config-item">
-            <div class="sync-status">
-              <span class="sync-label">Last sync:</span>
-              <span class="sync-value">{{ lastSyncTime }}</span>
-            </div>
-            <div v-if="syncStatus" class="sync-message" :class="syncStatus.type">
-              {{ syncStatus.message }}
-            </div>
-          </div>
-          
-          <div class="config-item checkbox section-divider">
-            <h4 class="section-title">🤖 Automatic Background Predictions</h4>
-          </div>
-          <div class="config-item checkbox">
-            <label>
-              <input type="checkbox" v-model="autoRunEnabled" @change="onAutoRunToggle" />
-              Enable automatic predictions every hour
-            </label>
-            <span class="config-hint-inline">
-              Backend runs predictions and updates sensors automatically without UI
-            </span>
-          </div>
-          <div v-if="autoRunEnabled" class="config-item">
-            <div class="auto-run-status">
-              <div class="status-row">
-                <span class="status-label">Status:</span>
-                <span class="status-badge" :class="autoRunStatus.isRunning ? 'running' : 'stopped'">
-                  {{ autoRunStatus.isRunning ? '🟢 Running' : '🔴 Stopped' }}
-                </span>
-              </div>
-              <div v-if="autoRunStatus.lastRun" class="status-row">
-                <span class="status-label">Last run:</span>
-                <span class="status-value">{{ formatAutoRunTime(autoRunStatus.lastRun) }}</span>
-              </div>
-              <div v-if="autoRunStatus.lastStatus" class="status-row">
-                <span class="status-label">Last status:</span>
-                <span class="status-value">{{ autoRunStatus.lastStatus }}</span>
-              </div>
-            </div>
-            <button @click="triggerManualAutoRun" class="btn-manual-run" :disabled="!autoRunStatus.isRunning">
-              ▶️ Run Now
-            </button>
-          </div>
-        </div>
-        <div class="dialog-footer">
-          <button @click="showSettingsDialog = false" class="btn-close">Close</button>
-        </div>
-      </div>
     </div>
 
     <!-- Status Messages -->
@@ -347,8 +168,14 @@ const props = defineProps({
     type: String,
     required: false,
     default: ''
+  },
+  detectorSettings: {
+    type: Object,
+    required: true
   }
 })
+
+const emit = defineEmits(['update:detectorSettings'])
 
 // State
 const selectedDate = ref(format(new Date(), 'yyyy-MM-dd'))
@@ -363,18 +190,25 @@ const pieChart = ref(null)
 const powerChartCanvas = ref(null)
 const pieChartCanvas = ref(null)
 const showDetailedPredictions = ref(false)
-const showSettingsDialog = ref(false)
 
-// Configuration
-const threshold = ref(0.25) // Default 25% threshold for detection
+// Configuration - now using props instead of local state
+const threshold = computed(() => props.detectorSettings.threshold)
+const useSeq2Point = computed(() => props.detectorSettings.useSeq2Point)
+const useGSP = computed(() => props.detectorSettings.useGSP)
+const gspConfig = computed(() => props.detectorSettings.gspConfig)
+const autoSyncToHA = computed(() => props.detectorSettings.autoSyncToHA)
+const autoRunEnabled = computed(() => props.detectorSettings.autoRunEnabled)
+
+// Seq2point configuration
+const seq2pointModels = ref([])
+const selectedSeq2PointModels = ref([]) // Array of selected model names
+const loadingModels = ref(false)
 
 // Home Assistant sensor sync configuration
-const autoSyncToHA = ref(localStorage.getItem('autoSyncToHA') === 'true' || false)
 const lastSyncTime = ref(null)
 const syncStatus = ref(null)
 
 // Automatic background predictions
-const autoRunEnabled = ref(localStorage.getItem('autoRunEnabled') === 'true' || false)
 const autoRunStatus = ref({
   enabled: false,
   isRunning: false,
@@ -383,24 +217,6 @@ const autoRunStatus = ref({
   lastStatus: 'Not started'
 })
 const autoRunCheckInterval = ref(null)
-
-// Seq2point configuration
-const useSeq2Point = ref(true) // Enable seq2point by default
-const seq2pointModels = ref([])
-const selectedSeq2PointModels = ref([]) // Array of selected model names
-const loadingModels = ref(false)
-
-// GSP configuration
-const useGSP = ref(false) // GSP disabled by default
-const gspConfig = ref({
-  sigma: 20,              // Gaussian kernel parameter
-  ri: 0.15,               // Coefficient of variation threshold
-  T_Positive: 20,         // Positive event threshold (Watts)
-  T_Negative: -20,        // Negative event threshold (Watts)
-  alpha: 0.5,             // Weight for magnitude matching
-  beta: 0.5,              // Weight for temporal matching
-  instancelimit: 3        // Minimum appliance ON instances
-})
 
 // Appliance filter for power chart
 const selectedAppliance = ref(null)
@@ -691,11 +507,11 @@ const loadSeq2PointModels = async () => {
   }
 }
 
-// Handle auto-run toggle
-const onAutoRunToggle = async () => {
-  localStorage.setItem('autoRunEnabled', autoRunEnabled.value.toString())
+// Watch for auto-run toggle changes
+watch(() => props.detectorSettings.autoRunEnabled, async (enabled, oldEnabled) => {
+  if (enabled === oldEnabled) return
   
-  if (autoRunEnabled.value) {
+  if (enabled) {
     try {
       // Start the auto-predictor with current configuration
       const config = {
@@ -715,8 +531,6 @@ const onAutoRunToggle = async () => {
       startAutoRunStatusPolling()
     } catch (error) {
       console.error('Failed to start auto-predictor:', error)
-      autoRunEnabled.value = false
-      localStorage.setItem('autoRunEnabled', 'false')
       alert(`Failed to start automatic predictions: ${error.message}`)
     }
   } else {
@@ -734,7 +548,7 @@ const onAutoRunToggle = async () => {
       console.error('Failed to stop auto-predictor:', error)
     }
   }
-}
+})
 
 // Update auto-run status
 const updateAutoRunStatus = async () => {
@@ -783,36 +597,6 @@ const formatAutoRunTime = (isoString) => {
     return format(date, 'MMM dd, HH:mm:ss')
   } catch {
     return isoString
-  }
-}
-
-const onMethodChange = () => {
-  // Load seq2point models if enabled and not loaded
-  if (useSeq2Point.value && seq2pointModels.value.length === 0) {
-    loadSeq2PointModels()
-  }
-  
-  // Ensure at least one method is enabled
-  if (!useSeq2Point.value && !useGSP.value) {
-    // If both are disabled, re-enable seq2point as default
-    useSeq2Point.value = true
-  }
-}
-
-// Watch for settings dialog opening to refresh models list
-watch(showSettingsDialog, (isOpen) => {
-  if (isOpen && useSeq2Point.value) {
-    loadSeq2PointModels()
-  }
-})
-
-// Handle auto-sync toggle change
-const onAutoSyncChange = () => {
-  localStorage.setItem('autoSyncToHA', autoSyncToHA.value.toString())
-  if (autoSyncToHA.value) {
-    syncStatus.value = { type: 'info', message: 'Auto-sync enabled. Sensors will be updated after each analysis.' }
-  } else {
-    syncStatus.value = { type: 'info', message: 'Auto-sync disabled.' }
   }
 }
 
@@ -1883,6 +1667,13 @@ watch(() => props.sessionId, (newSessionId) => {
   }
 })
 
+// Watch for seq2point toggle to load models when enabled
+watch(() => props.detectorSettings.useSeq2Point, (enabled) => {
+  if (enabled && seq2pointModels.value.length === 0) {
+    loadSeq2PointModels()
+  }
+})
+
 onUnmounted(() => {
   if (powerChart.value) {
     powerChart.value.destroy()
@@ -1900,243 +1691,6 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-}
-
-.dialog-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.dialog-content {
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-  max-width: 600px;
-  width: 90%;
-  max-height: 80vh;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.dialog-header {
-  padding: 1.5rem;
-  border-bottom: 1px solid #ecf0f1;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.dialog-header h3 {
-  margin: 0;
-  color: #2c3e50;
-  font-size: 1.25rem;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  font-size: 1.5rem;
-  color: #95a5a6;
-  cursor: pointer;
-  padding: 0;
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  transition: all 0.2s;
-}
-
-.close-btn:hover {
-  background: #ecf0f1;
-  color: #2c3e50;
-}
-
-.dialog-body {
-  padding: 1.5rem;
-  overflow-y: auto;
-  flex: 1;
-}
-
-.dialog-footer {
-  padding: 1rem 1.5rem;
-  border-top: 1px solid #ecf0f1;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.btn-close {
-  padding: 0.5rem 1.5rem;
-  background: #5b9bd5;
-  color: white;
-  border: none;
-  border-radius: 6px;
-  font-size: 0.95rem;
-  cursor: pointer;
-  font-weight: 500;
-  transition: all 0.2s;
-}
-
-.btn-close:hover {
-  background: #4a8bc2;
-  transform: translateY(-1px);
-}
-
-.config-item {
-  margin-bottom: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.config-item label {
-  font-weight: 500;
-  color: #555;
-}
-
-.config-item select {
-  padding: 0.5rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  background: white;
-  color: #2c3e50;
-  font-size: 0.95rem;
-}
-
-.config-item input[type="range"] {
-  width: 100%;
-}
-
-.config-value {
-  font-weight: 600;
-  color: #3498db;
-  margin-left: 0.5rem;
-}
-
-.config-hint {
-  font-size: 0.85rem;
-  color: #95a5a6;
-  font-style: italic;
-}
-
-.config-item.checkbox {
-  flex-direction: row;
-  align-items: center;
-}
-
-.config-item.checkbox label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
-}
-
-.config-item.checkbox input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
-  cursor: pointer;
-}
-
-.model-checkboxes {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  padding: 0.5rem;
-  max-height: 200px;
-  overflow-y: auto;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
-  background: #fafafa;
-}
-
-.checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
-  padding: 0.5rem;
-  border-radius: 4px;
-  transition: background 0.2s;
-}
-
-.checkbox-label:hover {
-  background: #f0f0f0;
-}
-
-.checkbox-label input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
-  cursor: pointer;
-}
-
-.checkbox-label span {
-  font-size: 0.95rem;
-  color: #2c3e50;
-  font-weight: 500;
-}
-
-.section-title {
-  margin: 1rem 0 0.5rem 0;
-  font-size: 1rem;
-  color: #2c3e50;
-  font-weight: 600;
-  border-bottom: 2px solid #e0e0e0;
-  padding-bottom: 0.5rem;
-}
-
-.config-hint-inline {
-  font-size: 0.8rem;
-  color: #95a5a6;
-  font-style: italic;
-  margin-left: 0.5rem;
-}
-
-.gsp-config {
-  padding: 1rem;
-  background: #f8f9fa;
-  border-radius: 6px;
-  border: 1px solid #e0e0e0;
-}
-
-.gsp-param {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1rem;
-  gap: 1rem;
-}
-
-.gsp-param:last-child {
-  margin-bottom: 0;
-}
-
-.gsp-param label {
-  flex: 1;
-  font-size: 0.9rem;
-  color: #555;
-  font-weight: 500;
-}
-
-.gsp-param input[type="range"] {
-  flex: 2;
-  cursor: pointer;
-}
-
-.gsp-param .config-value {
-  min-width: 45px;
-  text-align: right;
-  font-weight: 600;
-  color: #3498db;
 }
 
 .date-selector {
@@ -2168,7 +1722,7 @@ onUnmounted(() => {
   color: #2c3e50;
 }
 
-.nav-btn, .btn-analyze, .btn-settings {
+.nav-btn, .btn-analyze {
   padding: 0.5rem 1rem;
   border: none;
   border-radius: 6px;
@@ -2201,16 +1755,6 @@ onUnmounted(() => {
 .btn-analyze:disabled {
   background: #ccc;
   cursor: not-allowed;
-}
-
-.btn-settings {
-  background: #95a5a6;
-  color: white;
-}
-
-.btn-settings:hover {
-  background: #7f8c8d;
-  transform: translateY(-1px);
 }
 
 .status-warning {

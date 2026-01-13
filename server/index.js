@@ -6,6 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
 import archiver from 'archiver'
+import * as ort from 'onnxruntime-node'
 import tf from './ml/tf-provider.js'
 import { PowerTagPredictor } from './ml/model.js'
 import { MSDCPredictor } from './ml/model-msdc.js'
@@ -45,7 +46,25 @@ let appSettings = {
   haUrl: '',
   haToken: '',
   entityId: 'sensor.power_consumption',
-  autoConnect: false
+  autoConnect: false,
+  defaultView: 'detector',
+  autoLoadData: false,
+  detector: {
+    threshold: 0.25,
+    useSeq2Point: true,
+    useGSP: false,
+    gspConfig: {
+      sigma: 20,
+      ri: 0.15,
+      T_Positive: 20,
+      T_Negative: -20,
+      alpha: 0.5,
+      beta: 0.5,
+      instancelimit: 3
+    },
+    autoSyncToHA: false,
+    autoRunEnabled: false
+  }
 }
 
 const settingsPath = path.join(__dirname, '..', 'settings.json')
@@ -194,12 +213,15 @@ app.post('/api/settings', (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' })
   }
   
-  const { haUrl, haToken, entityId, autoConnect } = req.body
+  const { haUrl, haToken, entityId, autoConnect, defaultView, autoLoadData, detector } = req.body
   
   if (haUrl !== undefined) appSettings.haUrl = haUrl
   if (haToken !== undefined) appSettings.haToken = haToken
   if (entityId !== undefined) appSettings.entityId = entityId
   if (autoConnect !== undefined) appSettings.autoConnect = autoConnect
+  if (defaultView !== undefined) appSettings.defaultView = defaultView
+  if (autoLoadData !== undefined) appSettings.autoLoadData = autoLoadData
+  if (detector !== undefined) appSettings.detector = detector
   
   saveSettings()
   
@@ -2114,9 +2136,62 @@ app.post('/api/ml/predict-day', async (req, res) => {
 // Get available tags from predictions for anomaly detection
 app.get('/api/anomaly/tags', (req, res) => {
   try {
+    const dataDir = path.join(__dirname, '..', 'data')
+    const allTags = new Set()
+
+    // Read all tag files to get available tags
+    if (fs.existsSync(dataDir)) {
+      const files = fs.readdirSync(dataDir)
+      const tagFiles = files.filter(f => f.startsWith('power-tags-') && f.endsWith('.json'))
+
+      for (const file of tagFiles) {
+        const filePath = path.join(dataDir, file)
+        const content = fs.readFileSync(filePath, 'utf8')
+        const tagData = JSON.parse(content)
+
+        if (tagData.entries && Array.isArray(tagData.entries)) {
+          for (const entry of tagData.entries) {
+            // Split comma-separated tags and trim
+            const tags = entry.label.split(',').map(tag => tag.trim())
+            tags.forEach(tag => allTags.add(tag))
+          }
+        }
+      }
+    }
+
+    const uniqueTags = Array.from(allTags).sort()
+    
+    // Check for available seq2point models with trained autoencoders
+    const trainedModels = []
+    const modelsDir = path.join(__dirname, 'ml', 'saved_models')
+    
+    if (fs.existsSync(modelsDir)) {
+      const modelDirs = fs.readdirSync(modelsDir)
+        .filter(name => name.startsWith('seq2point_') && name.endsWith('_model'))
+      
+      for (const dirName of modelDirs) {
+        const modelPath = path.join(modelsDir, dirName)
+        const autoencoderPath = path.join(modelPath, 'autoencoder', 'model.json')
+        
+        // Only include if autoencoder is trained
+        if (fs.existsSync(autoencoderPath)) {
+          // Extract appliance name from directory name and convert back to tag format
+          // seq2point_water_heater_model -> water heater
+          const appliance = dirName
+            .replace('seq2point_', '')
+            .replace('_model', '')
+            .replace(/_/g, ' ') // Convert underscores back to spaces
+          trainedModels.push(appliance)
+        }
+      }
+    }
+    
+    console.log('Available tags:', uniqueTags)
+    console.log('Trained models (with autoencoders):', trainedModels)
+    
     res.json({
-      tags: mlTags,
-      availableModels: Array.from(autoencoderModels.keys())
+      tags: uniqueTags,
+      availableModels: trainedModels
     })
   } catch (error) {
     console.error('Error fetching tags:', error)
@@ -2306,169 +2381,214 @@ app.post('/api/anomaly/train', async (req, res) => {
       return res.status(401).json({ error: 'Invalid session' })
     }
 
-    // Load model if not in memory
-    if (!mlModel || !mlStats || mlTags.length === 0) {
-      // Use current model ID, or find most recent model
-      let modelDir
-      if (currentModelId) {
-        modelDir = path.join(__dirname, 'ml', 'models', currentModelId)
-      } else {
-        // Find most recent model
-        const modelsDir = path.join(__dirname, 'ml', 'models')
-        if (!fs.existsSync(modelsDir)) {
-          autoencoderTraining.delete(tag)
-          return res.status(400).json({ 
-            error: 'No trained model available',
-            message: 'Please train a model first in the ML Trainer tab'
-          })
-        }
-        
-        const modelDirs = fs.readdirSync(modelsDir)
-          .filter(item => fs.statSync(path.join(modelsDir, item)).isDirectory())
-          .sort((a, b) => parseInt(b) - parseInt(a)) // Sort by timestamp (newest first)
-        
-        if (modelDirs.length === 0) {
-          autoencoderTraining.delete(tag)
-          return res.status(400).json({ 
-            error: 'No trained model available',
-            message: 'Please train a model first in the ML Trainer tab'
-          })
-        }
-        
-        currentModelId = modelDirs[0]
-        modelDir = path.join(modelsDir, currentModelId)
-      }
+    // Check if seq2point model exists
+    const sanitizedTag = sanitizeApplianceName(tag)
+    const seq2pointModelPath = path.join(__dirname, 'ml', 'saved_models', `seq2point_${sanitizedTag}_model`)
+    
+    if (!fs.existsSync(seq2pointModelPath)) {
+      autoencoderTraining.delete(tag)
+      return res.status(400).json({ 
+        error: 'Seq2point model not found',
+        message: `No seq2point model found for "${tag}". Please train it first in the ML Trainer tab.`
+      })
+    }
+    
+    console.log(`✅ Found seq2point model at: ${seq2pointModelPath}`)
+    
+    // Load seq2point model if not in memory
+    if (!seq2pointModels.has(tag)) {
+      console.log(`Loading seq2point model for: ${tag}`)
+      const metadataPath = path.join(seq2pointModelPath, 'metadata.json')
       
-      const metadataPath = path.join(modelDir, 'metadata.json')
-
       if (!fs.existsSync(metadataPath)) {
         autoencoderTraining.delete(tag)
         return res.status(400).json({ 
-          error: 'No trained model available',
-          message: 'Please train a model first in the ML Trainer tab'
+          error: 'Model metadata not found',
+          message: `Metadata file missing for "${tag}". Please retrain the seq2point model.`
         })
       }
-
+      
       const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
-      mlTags = metadata.uniqueTags
-      mlStats = metadata.stats
-
-      mlModel = createModel()
-      mlModel.setTags(mlTags)
-      await mlModel.load(modelDir)
-
-      console.log(`✅ ML model loaded from disk for autoencoder training (ID: ${currentModelId})`)
+      seq2pointMetadata.set(tag, metadata)
+      
+      // Create PowerTagPredictor wrapper
+      const model = new PowerTagPredictor()
+      model.setNormalizationParams({
+        mainsMean: metadata.mainsStats.mean,
+        mainsStd: metadata.mainsStats.std,
+        applianceMean: metadata.applianceStats.mean,
+        applianceStd: metadata.applianceStats.std
+      })
+      
+      // Check user preference for inference engine
+      const useOnnx = useOnnxForModel.get(tag) === true
+      const onnxPath = path.join(seq2pointModelPath, 'model.onnx')
+      
+      if (useOnnx && fs.existsSync(onnxPath)) {
+        await model.loadONNX(onnxPath)
+        console.log(`✅ Loaded seq2point ONNX model for: ${tag}`)
+      } else {
+        await model.load(seq2pointModelPath)
+        console.log(`✅ Loaded seq2point TensorFlow model for: ${tag}`)
+      }
+      
+      seq2pointModels.set(tag, model)
     }
 
     console.log(`🧠 Starting autoencoder training for tag: ${tag}`)
     console.log(`Training dates provided: ${JSON.stringify(trainingDates)}`)
 
-    // Collect power curves from training dates
+    // Collect power curves from training dates using saved data files
     const powerCurves = []
+    const dataDir = path.join(__dirname, '..', 'data')
 
     for (const dateStr of trainingDates || []) {
       try {
         console.log(`\n📅 Processing date: ${dateStr}`)
-        const targetDate = new Date(dateStr)
-        const dayStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate())
-        const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000)
-
-        console.log(`  Date range: ${dayStart.toISOString()} to ${dayEnd.toISOString()}`)
-
-        // Fetch power data
-        const historyUrl = `${connection.url}/api/history/period/${dayStart.toISOString()}`
-        const params = new URLSearchParams({
-          filter_entity_id: entityId || connection.entityId,
-          end_time: dayEnd.toISOString(),
-          minimal_response: 'true',
-          no_attributes: 'true'
-        })
-
-        console.log(`  Fetching history for entity: ${entityId || connection.entityId}`)
-        const response = await fetch(`${historyUrl}?${params}`, {
-          headers: {
-            'Authorization': `Bearer ${connection.token}`,
-            'Content-Type': 'application/json'
-          }
-        })
-
-        if (!response.ok) {
-          console.warn(`  ❌ HTTP error: ${response.status}`)
-          continue
-        }
-
-        const history = await response.json()
-        console.log(`  Received history with ${history.length} entity groups`)
         
-        if (!history[0] || history[0].length === 0) {
-          console.warn(`  ❌ No history data for this date`)
+        // Load power data from saved file
+        const powerFile = `power-data-${dateStr}.json`
+        const powerPath = path.join(dataDir, powerFile)
+        
+        if (!fs.existsSync(powerPath)) {
+          console.warn(`  ❌ No power data file: ${powerFile}`)
+          continue
+        }
+        
+        const powerData = JSON.parse(fs.readFileSync(powerPath, 'utf-8'))
+        
+        // Load tag data
+        const tagFile = `power-tags-${dateStr}.json`
+        const tagPath = path.join(dataDir, tagFile)
+        
+        if (!fs.existsSync(tagPath)) {
+          console.warn(`  ❌ No tag data file: ${tagFile}`)
+          continue
+        }
+        
+        const tagData = JSON.parse(fs.readFileSync(tagPath, 'utf-8'))
+        
+        console.log(`  Loaded ${powerData.data?.length || 0} power readings and ${tagData.entries?.length || 0} tag entries`)
+
+        if (!powerData.data || powerData.data.length === 0) {
+          console.warn(`  ❌ No power data in file`)
           continue
         }
 
-        console.log(`  Raw history points: ${history[0].length}`)
-
-        const sortedData = history[0]
-          .filter(state => state.state !== 'unavailable' && state.state !== 'unknown')
-          .map(state => ({
-            timestamp: new Date(state.last_changed).getTime(),
-            value: parseFloat(state.state)
+        // Process power data - already in correct format
+        const sortedData = powerData.data
+          .map(d => ({
+            timestamp: new Date(d.timestamp).getTime(),
+            power: parseFloat(d.power)
           }))
-          .filter(d => !isNaN(d.value))
+          .filter(d => !isNaN(d.power))
           .sort((a, b) => a.timestamp - b.timestamp)
 
-        console.log(`  Valid data points after filtering: ${sortedData.length}`)
+        console.log(`  Valid data points: ${sortedData.length}`)
 
-        // Get predictions for this tag
-        console.log(`  Running sliding window predictions...`)
-        const slidingPredictor = new SlidingWindowPredictor(mlModel.model, mlTags, mlStats, 10)
-        const predictions = await slidingPredictor.predictDay(sortedData, targetDate, 0.3)
-        
-        console.log(`  Total predictions: ${predictions.length}`)
-        console.log(`  All predicted tags in this day:`, [...new Set(predictions.map(p => p.tag))])
-        
-        const tagPredictions = predictions.filter(p => 
-          p.tag === tag || (p.activeTags && p.activeTags.includes(tag))
+        // Use seq2point model to predict appliance power
+        const model = seq2pointModels.get(tag)
+        const metadata = seq2pointMetadata.get(tag)
+        const windowLength = metadata.windowLength
+        const offset = Math.floor(windowLength / 2)
+
+        // Normalize power data
+        const aggregatePowers = sortedData.map(d => d.power)
+        const normalized = aggregatePowers.map(p => 
+          (p - metadata.mainsStats.mean) / metadata.mainsStats.std
         )
 
-        console.log(`  Predictions matching tag "${tag}": ${tagPredictions.length}`)
+        // Generate predictions with sliding window
+        const predictions = []
+        
+        // Pad the end with last value
+        const paddedNormalized = [...normalized]
+        const lastValue = normalized[normalized.length - 1]
+        for (let i = 0; i < windowLength - 1; i++) {
+          paddedNormalized.push(lastValue)
+        }
 
-        // Extract power curves
-        let curvesFromThisDate = 0
-        for (const pred of tagPredictions) {
-          try {
-            // pred.startTime and pred.endTime are time strings like "00:20"
-            // Convert them to timestamps for the specific date
-            const [startHour, startMin] = pred.startTime.split(':').map(Number)
-            const [endHour, endMin] = pred.endTime.split(':').map(Number)
-            
-            const startTimestamp = new Date(dayStart.getTime() + startHour * 60 * 60 * 1000 + startMin * 60 * 1000).getTime()
-            const endTimestamp = new Date(dayStart.getTime() + endHour * 60 * 60 * 1000 + endMin * 60 * 1000).getTime()
-            
-            const windowData = sortedData.filter(d => 
-              d.timestamp >= startTimestamp && d.timestamp < endTimestamp
+        const maxWindowStart = normalized.length - 1 - offset
+        const batchSize = 100
+
+        for (let i = 0; i <= maxWindowStart; i += batchSize) {
+          const batchEnd = Math.min(i + batchSize, maxWindowStart + 1)
+          const windows = []
+          
+          for (let j = i; j < batchEnd; j++) {
+            windows.push(paddedNormalized.slice(j, j + windowLength))
+          }
+
+          const inputTensor = tf.tensor2d(windows)
+          const predictionResult = await model.predict(inputTensor)
+          
+          let powerTensor, onoffTensor
+          if (Array.isArray(predictionResult)) {
+            powerTensor = predictionResult[0]
+            onoffTensor = predictionResult[1]
+          } else {
+            powerTensor = predictionResult
+            onoffTensor = null
+          }
+          
+          const normalizedPreds = await powerTensor.data()
+          const onoffProbs = onoffTensor ? await onoffTensor.data() : null
+
+          for (let k = 0; k < normalizedPreds.length; k++) {
+            const power = Math.max(0, 
+              (normalizedPreds[k] * metadata.applianceStats.std) + metadata.applianceStats.mean
             )
+            predictions.push({
+              power: Math.round(power * 100) / 100,
+              onoffProb: onoffProbs ? onoffProbs[k] : null
+            })
+          }
+
+          inputTensor.dispose()
+          powerTensor.dispose()
+          if (onoffTensor) onoffTensor.dispose()
+        }
+
+        // Find ON periods and extract power curves
+        console.log(`  Analyzing ${predictions.length} predictions for ON periods...`)
+        
+        let inOnPeriod = false
+        let onStartIdx = -1
+        let curvesFromThisDate = 0
+
+        for (let i = 0; i < predictions.length; i++) {
+          const pred = predictions[i]
+          const isOn = pred.onoffProb !== null ? pred.onoffProb > 0.5 : pred.power > 50
+          
+          if (isOn && !inOnPeriod) {
+            // Start of ON period
+            inOnPeriod = true
+            onStartIdx = i
+          } else if (!isOn && inOnPeriod) {
+            // End of ON period - extract curve
+            const curve = predictions.slice(onStartIdx, i).map(p => p.power)
             
-            // Get probability for this specific tag
-            let probStr = 'N/A'
-            if (pred.tags && Array.isArray(pred.tags)) {
-              const tagInfo = pred.tags.find(t => t.tag === tag)
-              if (tagInfo && tagInfo.probability) {
-                probStr = tagInfo.probability.toFixed(3)
-              }
-            } else if (pred.confidence) {
-              probStr = pred.confidence.toFixed(3)
-            }
-            
-            console.log(`    Window ${pred.startTime}-${pred.endTime}: ${windowData.length} points, probability: ${probStr}`)
-            
-            if (windowData.length > 30) { // Ensure sufficient data
-              powerCurves.push(windowData.map(d => d.value))
+            if (curve.length >= 30) {
+              const avgPower = curve.reduce((sum, v) => sum + v, 0) / curve.length
+              const midpointIdx = onStartIdx + offset
+              const timestamp = midpointIdx < sortedData.length ? sortedData[midpointIdx].timestamp : null
+              const timeStr = timestamp ? new Date(timestamp).toTimeString().slice(0, 5) : 'N/A'
+              
+              console.log(`    Window ${timeStr}: ${curve.length} points, avg=${avgPower.toFixed(1)}W`)
+              powerCurves.push(curve)
               curvesFromThisDate++
-            } else {
-              console.log(`      ⚠️ Skipped (insufficient points: ${windowData.length})`)
             }
-          } catch (err) {
-            console.error(`      ❌ Error processing window:`, err.message)
+            
+            inOnPeriod = false
+          }
+        }
+
+        // Handle case where appliance is still ON at end of day
+        if (inOnPeriod && onStartIdx >= 0) {
+          const curve = predictions.slice(onStartIdx).map(p => p.power)
+          if (curve.length >= 30) {
+            powerCurves.push(curve)
+            curvesFromThisDate++
           }
         }
 
@@ -2501,11 +2621,20 @@ app.post('/api/anomaly/train', async (req, res) => {
       callbacks: []
     })
 
-    // Save model
+    // Save autoencoder model alongside seq2point model (sanitizedTag already defined above)
+    const autoencoderPath = path.join(seq2pointModelPath, 'autoencoder')
+    if (!fs.existsSync(autoencoderPath)) {
+      fs.mkdirSync(autoencoderPath, { recursive: true })
+    }
+    
+    await autoencoder.save(autoencoderPath)
+    
+    // Also keep in memory for immediate use
     autoencoderModels.set(tag, autoencoder)
     autoencoderTraining.delete(tag)
 
     console.log(`✅ Autoencoder training complete for tag: ${tag}`)
+    console.log(`💾 Saved autoencoder to: ${autoencoderPath}`)
 
     res.json({
       success: true,
@@ -2532,74 +2661,67 @@ app.post('/api/anomaly/detect', async (req, res) => {
     return res.status(400).json({ error: 'Missing tag, sessionId, or date' })
   }
 
-  const autoencoder = autoencoderModels.get(tag)
-  if (!autoencoder) {
-    return res.status(400).json({ 
-      error: 'No trained model for this tag',
-      message: `Please train an autoencoder for tag "${tag}" first`
-    })
-  }
-
   try {
+    // Check if seq2point model exists
+    const sanitizedTag = sanitizeApplianceName(tag)
+    const seq2pointModelPath = path.join(__dirname, 'ml', 'saved_models', `seq2point_${sanitizedTag}_model`)
+    
+    if (!fs.existsSync(seq2pointModelPath)) {
+      return res.status(400).json({ 
+        error: 'Seq2point model not found',
+        message: `No seq2point model found for "${tag}". Please train it first in the ML Trainer tab.`
+      })
+    }
+    
+    // Load seq2point model if not in memory
+    if (!seq2pointModels.has(tag)) {
+      console.log(`Loading seq2point model for: ${tag}`)
+      const metadataPath = path.join(seq2pointModelPath, 'metadata.json')
+      if (fs.existsSync(metadataPath)) {
+        const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+        seq2pointMetadata.set(tag, metadata)
+      }
+      
+      const onnxPath = path.join(seq2pointModelPath, 'model.onnx')
+      if (fs.existsSync(onnxPath)) {
+        const session = await ort.InferenceSession.create(onnxPath)
+        seq2pointModels.set(tag, session)
+        useOnnxForModel.set(tag, true)
+        console.log(`✅ Loaded seq2point ONNX model for: ${tag}`)
+      } else {
+        const model = await tf.loadLayersModel(`file://${seq2pointModelPath}/model.json`)
+        seq2pointModels.set(tag, model)
+        useOnnxForModel.set(tag, false)
+        console.log(`✅ Loaded seq2point TensorFlow model for: ${tag}`)
+      }
+    }
+    
+    // Load or get autoencoder
+    let autoencoder = autoencoderModels.get(tag)
+    if (!autoencoder) {
+      const autoencoderPath = path.join(seq2pointModelPath, 'autoencoder')
+      if (!fs.existsSync(autoencoderPath) || !fs.existsSync(path.join(autoencoderPath, 'model.json'))) {
+        return res.status(400).json({ 
+          error: 'No trained autoencoder for this tag',
+          message: `Please train an autoencoder for "${tag}" first by clicking "Train Autoencoder" in the Anomaly Detector tab.`
+        })
+      }
+      
+      console.log(`Loading autoencoder from: ${autoencoderPath}`)
+      autoencoder = new PowerAutoencoder(60, 8)
+      await autoencoder.load(autoencoderPath)
+      autoencoderModels.set(tag, autoencoder)
+      console.log(`✅ Loaded autoencoder for: ${tag}`)
+    }
+
+
     const connection = haConnections.get(sessionId)
     if (!connection) {
       return res.status(401).json({ error: 'Invalid session' })
     }
 
-    // Load model if not in memory
-    if (!mlModel || !mlStats || mlTags.length === 0) {
-      // Use current model ID, or find most recent model
-      let modelDir
-      if (currentModelId) {
-        modelDir = path.join(__dirname, 'ml', 'models', currentModelId)
-      } else {
-        // Find most recent model
-        const modelsDir = path.join(__dirname, 'ml', 'models')
-        if (!fs.existsSync(modelsDir)) {
-          return res.status(400).json({ 
-            error: 'No trained model available',
-            message: 'Please train a model first in the ML Trainer tab'
-          })
-        }
-        
-        const modelDirs = fs.readdirSync(modelsDir)
-          .filter(item => fs.statSync(path.join(modelsDir, item)).isDirectory())
-          .sort((a, b) => parseInt(b) - parseInt(a)) // Sort by timestamp (newest first)
-        
-        if (modelDirs.length === 0) {
-          return res.status(400).json({ 
-            error: 'No trained model available',
-            message: 'Please train a model first in the ML Trainer tab'
-          })
-        }
-        
-        currentModelId = modelDirs[0]
-        modelDir = path.join(modelsDir, currentModelId)
-      }
-      
-      const metadataPath = path.join(modelDir, 'metadata.json')
-
-      if (!fs.existsSync(metadataPath)) {
-        return res.status(400).json({ 
-          error: 'No trained model available',
-          message: 'Please train a model first in the ML Trainer tab'
-        })
-      }
-
-      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
-      mlTags = metadata.uniqueTags
-      mlStats = metadata.stats
-
-      mlModel = createModel()
-      mlModel.setTags(mlTags)
-      await mlModel.load(modelDir)
-
-      console.log(`✅ ML model loaded from disk for anomaly detection (ID: ${currentModelId})`)
-    }
-
     console.log(`🔍 Detecting anomalies for tag "${tag}" on ${date}`)
 
-    // Get predictions for this tag
     const targetDate = new Date(date)
     const dayStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate())
     const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000)
@@ -2638,49 +2760,188 @@ app.post('/api/anomaly/detect', async (req, res) => {
       .filter(d => !isNaN(d.value))
       .sort((a, b) => a.timestamp - b.timestamp)
 
-    // Get predictions for this tag
-    const slidingPredictor = new SlidingWindowPredictor(mlModel.model, mlTags, mlStats, 10)
-    const predictions = await slidingPredictor.predictDay(sortedData, targetDate, 0.3)
+    console.log(`Fetched ${sortedData.length} data points for ${date}`)
+
+    // Load seq2point model with PowerTagPredictor wrapper
+    const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${tag}_model`)
+    const metadataPath = path.join(modelDir, 'metadata.json')
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'))
     
-    const tagPredictions = predictions.filter(p => 
-      p.tag === tag || (p.activeTags && p.activeTags.includes(tag))
+    // Load model using PowerTagPredictor
+    const model = new PowerTagPredictor()
+    const useOnnx = useOnnxForModel.get(tag) || false
+    
+    if (useOnnx) {
+      const onnxPath = path.join(modelDir, 'model.onnx')
+      model.onnxSession = await ort.InferenceSession.create(onnxPath, {
+        executionProviders: ['cuda', 'cpu']
+      })
+    } else {
+      const tfModelPath = path.join(modelDir, 'model.json')
+      model.model = await tf.loadLayersModel(`file://${tfModelPath}`)
+    }
+    
+    model.inputWindowLength = metadata.windowLength
+    model.mainsMean = metadata.mainsStats.mean
+    model.mainsStd = metadata.mainsStats.std
+    model.applianceMean = metadata.applianceStats.mean
+    model.applianceStd = metadata.applianceStats.std
+    
+    const windowLength = metadata.windowLength
+    const offset = Math.floor(windowLength / 2)
+
+    // Normalize power data
+    const aggregatePowers = sortedData.map(d => d.value)
+    const normalized = aggregatePowers.map(p => 
+      (p - metadata.mainsStats.mean) / metadata.mainsStats.std
     )
 
-    // Detect anomalies in each window
-    const anomalies = []
-    for (const pred of tagPredictions) {
-      // Convert time strings to timestamps
-      const [startHour, startMin] = pred.startTime.split(':').map(Number)
-      const [endHour, endMin] = pred.endTime.split(':').map(Number)
-      
-      const startTimestamp = new Date(dayStart.getTime() + startHour * 60 * 60 * 1000 + startMin * 60 * 1000).getTime()
-      const endTimestamp = new Date(dayStart.getTime() + endHour * 60 * 60 * 1000 + endMin * 60 * 1000).getTime()
-      
-      const windowData = sortedData.filter(d => 
-        d.timestamp >= startTimestamp && d.timestamp < endTimestamp
-      )
-      
-      if (windowData.length < 30) continue
-
-      const powerCurve = windowData.map(d => d.value)
-      const result = await autoencoder.detectAnomalies(powerCurve, threshold)
-
-      anomalies.push({
-        startTime: startTimestamp,
-        endTime: endTimestamp,
-        startTimeStr: pred.startTime,
-        endTimeStr: pred.endTime,
-        isAnomaly: result.isAnomaly,
-        anomalyScore: result.anomalyScore,
-        reconstructionError: result.reconstructionError,
-        threshold: result.threshold,
-        original: result.original,
-        reconstructed: result.reconstructed,
-        timestamps: windowData.map(d => d.timestamp),
-        avgPower: pred.avgPower
-      })
+    // Generate predictions with sliding window
+    const predictions = []
+    
+    // Pad the end with last value
+    const paddedNormalized = [...normalized]
+    const lastValue = normalized[normalized.length - 1]
+    for (let i = 0; i < windowLength - 1; i++) {
+      paddedNormalized.push(lastValue)
     }
 
+    const maxWindowStart = normalized.length - 1 - offset
+    const batchSize = 100
+
+    for (let i = 0; i <= maxWindowStart; i += batchSize) {
+      const batchEnd = Math.min(i + batchSize, maxWindowStart + 1)
+      const windows = []
+      
+      for (let j = i; j < batchEnd; j++) {
+        windows.push(paddedNormalized.slice(j, j + windowLength))
+      }
+
+      const inputTensor = tf.tensor2d(windows)
+      const predictionResult = await model.predict(inputTensor)
+      
+      let powerTensor, onoffTensor
+      if (Array.isArray(predictionResult)) {
+        powerTensor = predictionResult[0]
+        onoffTensor = predictionResult[1]
+      } else {
+        powerTensor = predictionResult
+        onoffTensor = null
+      }
+      
+      const normalizedPreds = await powerTensor.data()
+      const onoffProbs = onoffTensor ? await onoffTensor.data() : null
+
+      for (let k = 0; k < normalizedPreds.length; k++) {
+        const power = Math.max(0, 
+          (normalizedPreds[k] * metadata.applianceStats.std) + metadata.applianceStats.mean
+        )
+        predictions.push({
+          power: Math.round(power * 100) / 100,
+          onoffProb: onoffProbs ? onoffProbs[k] : null
+        })
+      }
+
+      inputTensor.dispose()
+      powerTensor.dispose()
+      if (onoffTensor) onoffTensor.dispose()
+    }
+
+    console.log(`Generated ${predictions.length} seq2point predictions`)
+
+    // Find ON periods and detect anomalies in each period
+    const anomalies = []
+    let inOnPeriod = false
+    let onStartIdx = -1
+
+    for (let i = 0; i < predictions.length; i++) {
+      const pred = predictions[i]
+      const isOn = pred.onoffProb !== null ? pred.onoffProb > 0.5 : pred.power > 50
+      
+      if (isOn && !inOnPeriod) {
+        // Start of ON period
+        inOnPeriod = true
+        onStartIdx = i
+      } else if (!isOn && inOnPeriod) {
+        // End of ON period - extract curve and detect anomaly
+        const curve = predictions.slice(onStartIdx, i).map(p => p.power)
+        
+        if (curve.length >= 30) {
+          try {
+            const result = await autoencoder.detectAnomalies(curve, threshold)
+            
+            // Map prediction indices to data timestamps
+            // predictions[idx] corresponds to the sliding window centered at data point idx
+            // So for ON period from onStartIdx to i, we get timestamps for those exact indices
+            const periodTimestamps = []
+            for (let idx = onStartIdx; idx < i && idx < sortedData.length; idx++) {
+              periodTimestamps.push(sortedData[idx].timestamp)
+            }
+            
+            const windowStart = periodTimestamps[0] || null
+            const windowEnd = periodTimestamps[periodTimestamps.length - 1] || null
+
+            anomalies.push({
+              startTime: windowStart,
+              endTime: windowEnd,
+              startTimeStr: windowStart ? new Date(windowStart).toTimeString().slice(0, 5) : 'N/A',
+              endTimeStr: windowEnd ? new Date(windowEnd).toTimeString().slice(0, 5) : 'N/A',
+              isAnomaly: result.isAnomaly,
+              anomalyScore: result.anomalyScore,
+              reconstructionError: result.reconstructionError,
+              threshold: result.threshold,
+              original: result.original,
+              reconstructed: result.reconstructed,
+              timestamps: periodTimestamps,
+              avgPower: curve.reduce((sum, v) => sum + v, 0) / curve.length
+            })
+          } catch (err) {
+            console.error(`Error detecting anomaly in window:`, err.message)
+          }
+        }
+        
+        inOnPeriod = false
+      }
+    }
+
+    // Handle case where appliance is still ON at end of day
+    if (inOnPeriod && onStartIdx >= 0) {
+      const curve = predictions.slice(onStartIdx).map(p => p.power)
+      if (curve.length >= 30) {
+        try {
+          const result = await autoencoder.detectAnomalies(curve, threshold)
+          
+          // Map final ON period timestamps
+          const periodTimestamps = []
+          for (let idx = onStartIdx; idx < predictions.length && idx < sortedData.length; idx++) {
+            periodTimestamps.push(sortedData[idx].timestamp)
+          }
+          
+          const windowStart = periodTimestamps[0] || null
+          const windowEnd = periodTimestamps[periodTimestamps.length - 1] || sortedData[sortedData.length - 1].timestamp
+
+          anomalies.push({
+            startTime: windowStart,
+            endTime: windowEnd,
+            startTimeStr: windowStart ? new Date(windowStart).toTimeString().slice(0, 5) : 'N/A',
+            endTimeStr: new Date(windowEnd).toTimeString().slice(0, 5),
+            isAnomaly: result.isAnomaly,
+            anomalyScore: result.anomalyScore,
+            reconstructionError: result.reconstructionError,
+            threshold: result.threshold,
+            original: result.original,
+            reconstructed: result.reconstructed,
+            timestamps: periodTimestamps,
+            avgPower: curve.reduce((sum, v) => sum + v, 0) / curve.length
+          })
+        } catch (err) {
+          console.error(`Error detecting anomaly in final window:`, err.message)
+        }
+      }
+    }
+    
+    console.log(`Detected ${anomalies.length} windows total`)
+    
     const anomalyCount = anomalies.filter(a => a.isAnomaly).length
 
     console.log(`✅ Detected ${anomalyCount} anomalies out of ${anomalies.length} windows`)
