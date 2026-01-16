@@ -1016,6 +1016,9 @@ app.post('/api/ml/train', async (req, res) => {
       // Calculate final metrics
       const finalMetrics = trainingHistory[trainingHistory.length - 1]
 
+      // Detect model output type
+      const hasOnOffOutput = mlModel.model && mlModel.model.outputs && mlModel.model.outputs.length === 2
+
       // Save metadata
       const metadata = {
         id: modelId,
@@ -1027,6 +1030,7 @@ app.post('/api/ml/train', async (req, res) => {
         createdAt: new Date().toISOString(),
         trainedAt: new Date().toISOString(),
         trainingHistory: trainingHistory,
+        hasOnOffOutput: hasOnOffOutput,
         trainingConfig: {
           windowLength: windowLength || 599,
           batchSize: batchSize,
@@ -2674,30 +2678,50 @@ app.post('/api/anomaly/detect', async (req, res) => {
     }
     
     // Load seq2point model if not in memory
-    if (!seq2pointModels.has(tag)) {
+    if (!seq2pointModels.has(sanitizedTag)) {
       console.log(`Loading seq2point model for: ${tag}`)
       const metadataPath = path.join(seq2pointModelPath, 'metadata.json')
       if (fs.existsSync(metadataPath)) {
         const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
-        seq2pointMetadata.set(tag, metadata)
+        seq2pointMetadata.set(sanitizedTag, metadata)
       }
       
       const onnxPath = path.join(seq2pointModelPath, 'model.onnx')
+      const tfModelPath = path.join(seq2pointModelPath, 'model.json')
+      
+      // Try ONNX first, fall back to TensorFlow if it fails
+      let modelLoaded = false
       if (fs.existsSync(onnxPath)) {
-        const session = await ort.InferenceSession.create(onnxPath)
-        seq2pointModels.set(tag, session)
-        useOnnxForModel.set(tag, true)
-        console.log(`✅ Loaded seq2point ONNX model for: ${tag}`)
-      } else {
-        const model = await tf.loadLayersModel(`file://${seq2pointModelPath}/model.json`)
-        seq2pointModels.set(tag, model)
-        useOnnxForModel.set(tag, false)
+        try {
+          const stats = fs.statSync(onnxPath)
+          if (stats.size > 0) {
+            const session = await ort.InferenceSession.create(onnxPath, {
+              executionProviders: ['cuda', 'cpu']
+            })
+            seq2pointModels.set(sanitizedTag, session)
+            useOnnxForModel.set(sanitizedTag, true)
+            console.log(`✅ Loaded seq2point ONNX model for: ${tag}`)
+            modelLoaded = true
+          } else {
+            console.warn(`⚠️ ONNX model file is empty, falling back to TensorFlow: ${onnxPath}`)
+          }
+        } catch (onnxError) {
+          console.warn(`⚠️ Failed to load ONNX model, falling back to TensorFlow: ${onnxError.message}`)
+        }
+      }
+      
+      if (!modelLoaded && fs.existsSync(tfModelPath)) {
+        const model = await tf.loadLayersModel(`file://${tfModelPath}`)
+        seq2pointModels.set(sanitizedTag, model)
+        useOnnxForModel.set(sanitizedTag, false)
         console.log(`✅ Loaded seq2point TensorFlow model for: ${tag}`)
+      } else if (!modelLoaded) {
+        throw new Error(`No valid model found for ${tag}`)
       }
     }
     
     // Load or get autoencoder
-    let autoencoder = autoencoderModels.get(tag)
+    let autoencoder = autoencoderModels.get(sanitizedTag)
     if (!autoencoder) {
       const autoencoderPath = path.join(seq2pointModelPath, 'autoencoder')
       if (!fs.existsSync(autoencoderPath) || !fs.existsSync(path.join(autoencoderPath, 'model.json'))) {
@@ -2710,7 +2734,7 @@ app.post('/api/anomaly/detect', async (req, res) => {
       console.log(`Loading autoencoder from: ${autoencoderPath}`)
       autoencoder = new PowerAutoencoder(60, 8)
       await autoencoder.load(autoencoderPath)
-      autoencoderModels.set(tag, autoencoder)
+      autoencoderModels.set(sanitizedTag, autoencoder)
       console.log(`✅ Loaded autoencoder for: ${tag}`)
     }
 
@@ -2762,23 +2786,22 @@ app.post('/api/anomaly/detect', async (req, res) => {
 
     console.log(`Fetched ${sortedData.length} data points for ${date}`)
 
-    // Load seq2point model with PowerTagPredictor wrapper
-    const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${tag}_model`)
-    const metadataPath = path.join(modelDir, 'metadata.json')
-    const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'))
+    // Get metadata and model from cache
+    const metadata = seq2pointMetadata.get(sanitizedTag)
+    const cachedModel = seq2pointModels.get(sanitizedTag)
+    const useOnnx = useOnnxForModel.get(sanitizedTag) || false
     
-    // Load model using PowerTagPredictor
+    // Create PowerTagPredictor wrapper with cached model
     const model = new PowerTagPredictor()
-    const useOnnx = useOnnxForModel.get(tag) || false
-    
     if (useOnnx) {
-      const onnxPath = path.join(modelDir, 'model.onnx')
-      model.onnxSession = await ort.InferenceSession.create(onnxPath, {
-        executionProviders: ['cuda', 'cpu']
-      })
+      model.onnxSession = cachedModel
+      // Detect if multi-task based on ONNX output names
+      model.isMultiTask = cachedModel.outputNames.includes('power_output') && 
+                          cachedModel.outputNames.includes('onoff_output')
+      console.log(`ONNX model multi-task: ${model.isMultiTask}, outputs: ${cachedModel.outputNames.join(', ')}`)
     } else {
-      const tfModelPath = path.join(modelDir, 'model.json')
-      model.model = await tf.loadLayersModel(`file://${tfModelPath}`)
+      model.model = cachedModel
+      // TensorFlow models automatically return arrays for dual outputs
     }
     
     model.inputWindowLength = metadata.windowLength
@@ -2824,9 +2847,21 @@ app.post('/api/anomaly/detect', async (req, res) => {
       if (Array.isArray(predictionResult)) {
         powerTensor = predictionResult[0]
         onoffTensor = predictionResult[1]
+        
+        // Log on first batch to verify model output structure
+        if (i === 0) {
+          console.log(`Model output structure: Array with ${predictionResult.length} tensors`)
+          console.log(`  Power tensor shape: [${powerTensor.shape}]`)
+          console.log(`  On/Off tensor shape: [${onoffTensor.shape}]`)
+        }
       } else {
         powerTensor = predictionResult
         onoffTensor = null
+        
+        if (i === 0) {
+          console.log(`Model output structure: Single tensor (power only)`)
+          console.log(`  Power tensor shape: [${powerTensor.shape}]`)
+        }
       }
       
       const normalizedPreds = await powerTensor.data()
@@ -2849,6 +2884,22 @@ app.post('/api/anomaly/detect', async (req, res) => {
 
     console.log(`Generated ${predictions.length} seq2point predictions`)
 
+    // Determine ON threshold dynamically based on predictions
+    // Use the model's on/off output if available, otherwise use power threshold
+    const hasOnOffModel = predictions.some(p => p.onoffProb !== null)
+    const onoffCount = predictions.filter(p => p.onoffProb !== null).length
+    
+    console.log(`🔍 Model output analysis for ${tag}:`)
+    console.log(`   Predictions with on/off: ${onoffCount}/${predictions.length} (${(onoffCount/predictions.length*100).toFixed(1)}%)`)
+    console.log(`   Using on/off model: ${hasOnOffModel ? 'YES' : 'NO - using power threshold'}`)
+    
+    // Calculate power threshold from predictions (10% of max predicted power, min 50W)
+    const maxPower = Math.max(...predictions.map(p => p.power))
+    const powerThreshold = Math.max(50, maxPower * 0.1)
+    
+    console.log(`   Max predicted power: ${maxPower.toFixed(1)}W`)
+    console.log(`   Power threshold (fallback): ${powerThreshold.toFixed(1)}W`)
+
     // Find ON periods and detect anomalies in each period
     const anomalies = []
     let inOnPeriod = false
@@ -2856,15 +2907,17 @@ app.post('/api/anomaly/detect', async (req, res) => {
 
     for (let i = 0; i < predictions.length; i++) {
       const pred = predictions[i]
-      const isOn = pred.onoffProb !== null ? pred.onoffProb > 0.5 : pred.power > 50
+      const isOn = pred.onoffProb !== null ? pred.onoffProb > 0.5 : pred.power > powerThreshold
       
       if (isOn && !inOnPeriod) {
         // Start of ON period
         inOnPeriod = true
         onStartIdx = i
+        console.log(`🟢 ON period started at index ${i} (${new Date(sortedData[i]?.timestamp).toTimeString().slice(0, 8)})`)
       } else if (!isOn && inOnPeriod) {
         // End of ON period - extract curve and detect anomaly
         const curve = predictions.slice(onStartIdx, i).map(p => p.power)
+        console.log(`🔴 ON period ended at index ${i}, duration: ${curve.length} points`)
         
         if (curve.length >= 30) {
           try {
@@ -2940,7 +2993,15 @@ app.post('/api/anomaly/detect', async (req, res) => {
       }
     }
     
-    console.log(`Detected ${anomalies.length} windows total`)
+    console.log(`📊 Anomaly Detection Summary for ${tag}:`)
+    console.log(`   Total ON periods found: ${anomalies.length}`)
+    console.log(`   Anomalous periods: ${anomalies.filter(a => a.isAnomaly).length}`)
+    if (anomalies.length > 0) {
+      console.log(`   ON periods:`)
+      anomalies.forEach((a, idx) => {
+        console.log(`     ${idx + 1}. ${a.startTimeStr}-${a.endTimeStr} | Avg: ${a.avgPower.toFixed(1)}W | ${a.isAnomaly ? '⚠️ ANOMALY' : '✅ Normal'} (score: ${a.anomalyScore.toFixed(3)})`)
+      })
+    }
     
     const anomalyCount = anomalies.filter(a => a.isAnomaly).length
 
@@ -3010,7 +3071,8 @@ app.get('/api/seq2point/models', (req, res) => {
         metadata,
         loaded: seq2pointModels.has(appliance),
         hasOnnx: fs.existsSync(onnxPath),
-        useOnnx: useOnnxForModel.get(appliance) || false
+        useOnnx: useOnnxForModel.get(appliance) || false,
+        hasOnOffOutput: metadata?.hasOnOffOutput || false
       }
     })
 

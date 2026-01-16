@@ -84,6 +84,7 @@
                 <th>Samples</th>
                 <th>Appliance</th>
                 <th>Val MAE</th>
+                <th>Model Type</th>
                 <th>Inference</th>
                 <th>Status</th>
                 <th>Actions</th>
@@ -116,6 +117,11 @@
                 <td>
                   <span class="accuracy-badge" :class="getMaeClass(model.finalMetrics?.valMae)">
                     {{ model.finalMetrics?.valMae ? model.finalMetrics.valMae.toFixed(2) + ' W' : 'N/A' }}
+                  </span>
+                </td>
+                <td>
+                  <span class="model-type-badge" :class="getModelTypeClass(model.modelType)" :title="getModelTypeDescription(model.modelType, model.hasOnOffOutput)">
+                    {{ getModelTypeLabel(model.modelType) }}
                   </span>
                 </td>
                 <td>
@@ -936,7 +942,9 @@ export default {
           trainingConfig: model.metadata?.trainingConfig,
           isActive: model.loaded,
           hasOnnx: model.hasOnnx,
-          useOnnx: model.useOnnx || false
+          useOnnx: model.useOnnx || false,
+          hasOnOffOutput: model.hasOnOffOutput || false,
+          modelType: model.metadata?.modelType || 'seq2point'
         }))
       } catch (err) {
         console.error('Failed to load models list:', err)
@@ -1220,6 +1228,25 @@ export default {
       if (mae <= 30) return 'accuracy-high'  // Good: low error
       if (mae <= 60) return 'accuracy-medium'  // Medium: acceptable error
       return 'accuracy-low'  // High: poor predictions
+    },
+
+    getModelTypeClass(modelType) {
+      if (modelType === 'MSDC' || modelType === 'MSDCPredictor') return 'model-type-msdc'
+      return 'model-type-seq2point'
+    },
+
+    getModelTypeLabel(modelType) {
+      if (modelType === 'MSDC' || modelType === 'MSDCPredictor') return '🔀 MSDC'
+      return '🎯 Seq2Point'
+    },
+
+    getModelTypeDescription(modelType, hasOnOffOutput) {
+      if (modelType === 'MSDC' || modelType === 'MSDCPredictor') {
+        return 'Multi-Stream Deep Convolutional model with dual-branch architecture'
+      }
+      return hasOnOffOutput 
+        ? 'Seq2Point model with power + on/off outputs' 
+        : 'Seq2Point model with power output only'
     },
 
     startEditName(modelId, currentName) {
@@ -2998,6 +3025,25 @@ export default {
 .accuracy-low {
   background: #f8d7da;
   color: #721c24;
+}
+
+.model-type-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.model-type-badge.model-type-seq2point {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.model-type-badge.model-type-msdc {
+  background: #f3e5f5;
+  color: #6a1b9a;
 }
 
 .status-badge {
