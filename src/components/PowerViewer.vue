@@ -670,7 +670,7 @@ const login = async () => {
   loading.value = true
   
   try {
-    const response = await fetch('http://localhost:3001/api/auth/login', {
+    const response = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -726,7 +726,7 @@ const login = async () => {
 // Logout function
 const logout = async () => {
   try {
-    await fetch('http://localhost:3001/api/auth/logout', {
+    await fetch('/api/auth/logout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionToken: sessionToken.value })
@@ -1120,7 +1120,7 @@ const applyModelSubtractions = async () => {
         console.log(`Fetching predictions for model ${modelName}...`)
         
         // Call predict-day endpoint
-        const response = await fetch('http://localhost:3001/api/seq2point/predict-day', {
+        const response = await fetch('/api/seq2point/predict-day', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -1278,7 +1278,7 @@ const saveDetectorSettings = async () => {
 
 const saveSettingsToBackend = async () => {
   try {
-    await fetch('http://localhost:3001/api/settings', {
+    await fetch('/api/settings', {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
@@ -1316,7 +1316,7 @@ const reconnect = async () => {
 
 const loadSettingsFromBackend = async () => {
   try {
-    const response = await fetch('http://localhost:3001/api/settings', {
+    const response = await fetch('/api/settings', {
       headers: { 
         'Authorization': `Bearer ${sessionToken.value}`
       }
@@ -1403,7 +1403,7 @@ const loadSettingsFromBackend = async () => {
 
 // Check for existing session on mount
 if (sessionToken.value) {
-  fetch('http://localhost:3001/api/auth/verify', {
+  fetch('/api/auth/verify', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sessionToken: sessionToken.value })

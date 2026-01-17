@@ -3,7 +3,7 @@
  * Handles API calls for managing appliance model libraries
  */
 
-const API_BASE = 'http://localhost:3001/api'
+const API_BASE = '/api'
 
 /**
  * Get all models from the library
