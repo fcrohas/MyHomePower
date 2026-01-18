@@ -2,6 +2,8 @@
 
 A Vue.js application for tagging and analyzing power consumption history from Home Assistant.
 
+> 🌐 **[Visit the Website](https://fcrohas.github.io/MyHomePower/)** - Check out our GitHub Pages site for an overview of features and documentation!
+
 ## Features
 
 - 📊 **Interactive Power Chart**: Visualize power consumption data with Chart.js
