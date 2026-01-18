@@ -59,15 +59,41 @@
                     </div>
                     <div class="chart-area">
                         <svg viewBox="0 0 400 200" class="chart-svg">
-                            <path d="M 0 180 Q 50 170 100 160 T 200 140 T 300 120 T 400 80" 
+                            <!-- Grid lines for background -->
+                            <g class="grid" opacity="0.1">
+                                <line x1="0" y1="50" x2="400" y2="50" stroke="#667eea" stroke-width="0.5"/>
+                                <line x1="0" y1="100" x2="400" y2="100" stroke="#667eea" stroke-width="0.5"/>
+                                <line x1="0" y1="150" x2="400" y2="150" stroke="#667eea" stroke-width="0.5"/>
+                            </g>
+                            <!-- Realistic power consumption pattern with spikes and variations -->
+                            <path d="M 0 140 L 10 145 L 20 150 L 30 155 L 40 160 L 50 165 L 60 170 L 70 175 L 80 178 
+                                     L 90 50 L 100 45 L 110 48 L 120 55 L 130 60 L 140 58 L 150 150 
+                                     L 160 155 L 170 160 L 180 40 L 190 35 L 200 38 L 210 42 L 220 45 L 230 50 L 240 80
+                                     L 250 75 L 260 70 L 270 25 L 280 20 L 290 30 L 300 90 L 310 95
+                                     L 320 100 L 330 110 L 340 30 L 350 28 L 360 35 L 370 120 L 380 130 L 390 135 L 400 140" 
                                   fill="none" 
                                   stroke="url(#gradient)" 
-                                  stroke-width="3"
+                                  stroke-width="2"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
                                   class="power-line"/>
+                            <!-- Glow effect area under the line -->
+                            <path d="M 0 140 L 10 145 L 20 150 L 30 155 L 40 160 L 50 165 L 60 170 L 70 175 L 80 178 
+                                     L 90 50 L 100 45 L 110 48 L 120 55 L 130 60 L 140 58 L 150 150 
+                                     L 160 155 L 170 160 L 180 40 L 190 35 L 200 38 L 210 42 L 220 45 L 230 50 L 240 80
+                                     L 250 75 L 260 70 L 270 25 L 280 20 L 290 30 L 300 90 L 310 95
+                                     L 320 100 L 330 110 L 340 30 L 350 28 L 360 35 L 370 120 L 380 130 L 390 135 L 400 140 L 400 200 L 0 200 Z" 
+                                  fill="url(#areaGradient)"
+                                  opacity="0.3"/>
                             <defs>
                                 <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
                                     <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
-                                    <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+                                    <stop offset="50%" style="stop-color:#764ba2;stop-opacity:1" />
+                                    <stop offset="100%" style="stop-color:#f093fb;stop-opacity:1" />
+                                </linearGradient>
+                                <linearGradient id="areaGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                    <stop offset="0%" style="stop-color:#667eea;stop-opacity:0.4" />
+                                    <stop offset="100%" style="stop-color:#667eea;stop-opacity:0" />
                                 </linearGradient>
                             </defs>
                         </svg>
