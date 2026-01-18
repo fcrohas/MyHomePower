@@ -11,8 +11,48 @@ function debounce(func, wait = 10) {
     };
 }
 
-// Check if user prefers reduced motion (used globally)
-const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+// Check if user prefers reduced motion (use MediaQueryList for dynamic updates)
+const prefersReducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+let prefersReducedMotion = prefersReducedMotionQuery.matches;
+
+// Listen for changes in motion preference
+prefersReducedMotionQuery.addEventListener('change', (e) => {
+    prefersReducedMotion = e.matches;
+    // Apply or remove reduced motion styles dynamically
+    if (prefersReducedMotion) {
+        applyReducedMotionStyles();
+    } else {
+        removeReducedMotionStyles();
+    }
+});
+
+// Function to apply reduced motion styles
+function applyReducedMotionStyles() {
+    if (!document.getElementById('reduced-motion-styles')) {
+        const style = document.createElement('style');
+        style.id = 'reduced-motion-styles';
+        style.textContent = `
+            .feature-card,
+            .step,
+            .use-case,
+            .tech-item,
+            .power-line,
+            .power-chart-mockup {
+                animation: none !important;
+                transition: opacity 0.3s ease, transform 0.3s ease !important;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+}
+
+// Function to remove reduced motion styles
+function removeReducedMotionStyles() {
+    const style = document.getElementById('reduced-motion-styles');
+    if (style) {
+        style.remove();
+    }
+}
 
 // Mobile Menu Toggle
 document.addEventListener('DOMContentLoaded', () => {
@@ -146,7 +186,9 @@ const observer = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
         if (entry.isIntersecting) {
             entry.target.style.opacity = '1';
-            entry.target.style.transform = 'translateY(0)';
+            if (!prefersReducedMotion) {
+                entry.target.style.transform = 'translateY(0)';
+            }
         }
     });
 }, observerOptions);
@@ -154,8 +196,12 @@ const observer = new IntersectionObserver((entries) => {
 // Observe elements for animation
 document.querySelectorAll('.feature-card, .step, .use-case, .tech-item').forEach(el => {
     el.style.opacity = '0';
-    el.style.transform = 'translateY(30px)';
-    el.style.transition = 'opacity 0.6s ease-out, transform 0.6s ease-out';
+    if (!prefersReducedMotion) {
+        el.style.transform = 'translateY(30px)';
+        el.style.transition = 'opacity 0.6s ease-out, transform 0.6s ease-out';
+    } else {
+        el.style.transition = 'opacity 0.6s ease-out';
+    }
     observer.observe(el);
 });
 
@@ -222,11 +268,15 @@ window.addEventListener('scroll', debouncedScroll);
 // Add Loading Animation to Buttons
 document.querySelectorAll('.btn').forEach(btn => {
     btn.addEventListener('mouseenter', function() {
-        this.style.transform = 'translateY(-2px)';
+        if (!prefersReducedMotion) {
+            this.style.transform = 'translateY(-2px)';
+        }
     });
     
     btn.addEventListener('mouseleave', function() {
-        this.style.transform = 'translateY(0)';
+        if (!prefersReducedMotion) {
+            this.style.transform = 'translateY(0)';
+        }
     });
 });
 
@@ -321,22 +371,9 @@ yearElements.forEach(el => {
     el.textContent = new Date().getFullYear();
 });
 
-// Apply additional reduced motion styles if needed
+// Apply initial reduced motion styles if needed
 if (prefersReducedMotion) {
-    // Disable specific animations for users who prefer reduced motion
-    const style = document.createElement('style');
-    style.textContent = `
-        .feature-card,
-        .step,
-        .use-case,
-        .tech-item,
-        .power-line,
-        .power-chart-mockup {
-            animation: none !important;
-            transition: opacity 0.3s ease, transform 0.3s ease !important;
-        }
-    `;
-    document.head.appendChild(style);
+    applyReducedMotionStyles();
 }
 
 // Service Worker Registration (for PWA if needed in future)
