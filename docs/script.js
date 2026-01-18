@@ -119,9 +119,11 @@ document.querySelectorAll('.feature-card, .step, .use-case, .tech-item').forEach
 let lastScroll = 0;
 const navbar = document.querySelector('.navbar');
 
-window.addEventListener('scroll', () => {
+// Parallax Effect for Hero Section
+function handleScroll() {
     const currentScroll = window.pageYOffset;
     
+    // Update navbar shadow
     if (currentScroll > 100) {
         navbar.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.1)';
         navbar.style.background = 'rgba(255, 255, 255, 0.98)';
@@ -130,8 +132,19 @@ window.addEventListener('scroll', () => {
         navbar.style.background = '#ffffff';
     }
     
+    // Apply parallax to hero
+    const hero = document.querySelector('.hero');
+    if (hero && currentScroll < hero.offsetHeight) {
+        const parallax = currentScroll * 0.5;
+        hero.style.transform = `translateY(${parallax}px)`;
+    }
+    
     lastScroll = currentScroll;
-});
+}
+
+// Use debounced scroll handler
+const debouncedScroll = debounce(handleScroll, 10);
+window.addEventListener('scroll', debouncedScroll);
 
 // Add Loading Animation to Buttons
 document.querySelectorAll('.btn').forEach(btn => {
@@ -159,17 +172,6 @@ function animateCounter(element, target, duration = 2000) {
         }
     }, 16);
 }
-
-// Parallax Effect for Hero Section
-window.addEventListener('scroll', () => {
-    const scrolled = window.pageYOffset;
-    const hero = document.querySelector('.hero');
-    
-    if (hero && scrolled < hero.offsetHeight) {
-        const parallax = scrolled * 0.5;
-        hero.style.transform = `translateY(${parallax}px)`;
-    }
-});
 
 // Form Validation (if contact form is added)
 function validateEmail(email) {
@@ -234,8 +236,6 @@ function highlightNavigation() {
     });
 }
 
-window.addEventListener('scroll', highlightNavigation);
-
 // Performance Optimization: Debounce Scroll Events
 function debounce(func, wait = 10) {
     let timeout;
@@ -292,10 +292,14 @@ const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)
 
 if (prefersReducedMotion) {
     // Disable animations for users who prefer reduced motion
-    document.querySelectorAll('*').forEach(el => {
-        el.style.animation = 'none';
-        el.style.transition = 'none';
-    });
+    const style = document.createElement('style');
+    style.textContent = `
+        * {
+            animation: none !important;
+            transition: none !important;
+        }
+    `;
+    document.head.appendChild(style);
 }
 
 // Service Worker Registration (for PWA if needed in future)
