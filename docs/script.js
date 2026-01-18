@@ -59,7 +59,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const mobileMenuToggle = document.querySelector('.mobile-menu-toggle');
     const navMenu = document.querySelector('.nav-menu');
     
-    if (mobileMenuToggle) {
+    if (mobileMenuToggle && navMenu) {
         mobileMenuToggle.addEventListener('click', () => {
             navMenu.classList.toggle('active');
             mobileMenuToggle.classList.toggle('active');
@@ -67,13 +67,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     // Close mobile menu when clicking on a link
-    const navLinks = document.querySelectorAll('.nav-menu a');
-    navLinks.forEach(link => {
-        link.addEventListener('click', () => {
-            navMenu.classList.remove('active');
-            mobileMenuToggle.classList.remove('active');
+    if (navMenu && mobileMenuToggle) {
+        const navLinks = document.querySelectorAll('.nav-menu a');
+        navLinks.forEach(link => {
+            link.addEventListener('click', () => {
+                navMenu.classList.remove('active');
+                mobileMenuToggle.classList.remove('active');
+            });
         });
-    });
+    }
 });
 
 // Demo Tabs Functionality
@@ -330,7 +332,7 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         const navMenu = document.querySelector('.nav-menu');
         const mobileMenuToggle = document.querySelector('.mobile-menu-toggle');
-        if (navMenu && navMenu.classList.contains('active')) {
+        if (navMenu && navMenu.classList.contains('active') && mobileMenuToggle) {
             navMenu.classList.remove('active');
             mobileMenuToggle.classList.remove('active');
         }
