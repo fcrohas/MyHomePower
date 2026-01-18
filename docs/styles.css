@@ -391,7 +391,9 @@ section {
 
 .demo-panel.active {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 2fr 1fr;
+    gap: 3rem;
+    align-items: start;
 }
 
 .demo-description h3 {
@@ -423,6 +425,27 @@ section {
     left: 0;
     color: var(--success-color);
     font-weight: bold;
+}
+
+.demo-screenshot {
+    width: 100%;
+    max-width: 350px;
+    justify-self: center;
+}
+
+.demo-screenshot img {
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    box-shadow: var(--shadow-md);
+    border: 1px solid var(--border-color);
+    transition: var(--transition);
+    cursor: pointer;
+}
+
+.demo-screenshot img:hover {
+    transform: scale(1.05);
+    box-shadow: var(--shadow-lg);
 }
 
 .screenshot-placeholder {
