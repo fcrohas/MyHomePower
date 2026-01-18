@@ -11,6 +11,9 @@ function debounce(func, wait = 10) {
     };
 }
 
+// Check if user prefers reduced motion (used globally)
+const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 // Mobile Menu Toggle
 document.addEventListener('DOMContentLoaded', () => {
     const mobileMenuToggle = document.querySelector('.mobile-menu-toggle');
@@ -62,24 +65,52 @@ copyButtons.forEach(button => {
         if (codeElement) {
             const text = codeElement.textContent;
             
-            // Copy to clipboard
-            navigator.clipboard.writeText(text).then(() => {
-                // Visual feedback
-                const originalText = button.textContent;
-                button.textContent = 'Copied!';
-                button.style.background = '#48bb78';
-                
-                setTimeout(() => {
-                    button.textContent = originalText;
-                    button.style.background = '';
-                }, 2000);
-            }).catch(err => {
-                console.error('Failed to copy:', err);
-                button.textContent = 'Failed';
-                setTimeout(() => {
-                    button.textContent = 'Copy';
-                }, 2000);
-            });
+            // Copy to clipboard with fallback
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(() => {
+                    // Visual feedback
+                    const originalText = button.textContent;
+                    button.textContent = 'Copied!';
+                    button.style.background = '#48bb78';
+                    
+                    setTimeout(() => {
+                        button.textContent = originalText;
+                        button.style.background = '';
+                    }, 2000);
+                }).catch(err => {
+                    console.error('Failed to copy:', err);
+                    button.textContent = 'Failed';
+                    setTimeout(() => {
+                        button.textContent = 'Copy';
+                    }, 2000);
+                });
+            } else {
+                // Fallback for non-HTTPS or older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                textArea.style.position = 'fixed';
+                textArea.style.left = '-999999px';
+                document.body.appendChild(textArea);
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    const originalText = button.textContent;
+                    button.textContent = 'Copied!';
+                    button.style.background = '#48bb78';
+                    setTimeout(() => {
+                        button.textContent = originalText;
+                        button.style.background = '';
+                    }, 2000);
+                } catch (err) {
+                    console.error('Fallback copy failed:', err);
+                    button.textContent = 'Failed';
+                    setTimeout(() => {
+                        button.textContent = 'Copy';
+                    }, 2000);
+                } finally {
+                    document.body.removeChild(textArea);
+                }
+            }
         }
     });
 });
@@ -144,11 +175,13 @@ function handleScroll() {
         navbar.style.background = '#ffffff';
     }
     
-    // Apply parallax to hero
-    const hero = document.querySelector('.hero');
-    if (hero && currentScroll < hero.offsetHeight) {
-        const parallax = currentScroll * 0.5;
-        hero.style.transform = `translateY(${parallax}px)`;
+    // Apply parallax to hero only if motion is not reduced
+    if (!prefersReducedMotion) {
+        const hero = document.querySelector('.hero');
+        if (hero && currentScroll < hero.offsetHeight) {
+            const parallax = currentScroll * 0.5;
+            hero.style.transform = `translateY(${parallax}px)`;
+        }
     }
     
     lastScroll = currentScroll;
@@ -288,11 +321,9 @@ yearElements.forEach(el => {
     el.textContent = new Date().getFullYear();
 });
 
-// Check if user prefers reduced motion
-const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
+// Apply additional reduced motion styles if needed
 if (prefersReducedMotion) {
-    // Disable animations for users who prefer reduced motion
+    // Disable specific animations for users who prefer reduced motion
     const style = document.createElement('style');
     style.textContent = `
         .feature-card,
