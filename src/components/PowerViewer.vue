@@ -1002,8 +1002,17 @@ const onSensorsChanged = async (sensorIds) => {
   console.log('Type:', typeof sensorIds, 'Is Array:', Array.isArray(sensorIds))
   console.log('Length:', sensorIds?.length)
   console.log('Contents:', JSON.stringify(sensorIds))
+  console.log('Current rawPowerData length:', rawPowerData.value?.length)
+  console.log('Current powerData length:', powerData.value?.length)
+  
   subtractedSensorIds.value = sensorIds
   console.log('subtractedSensorIds.value set to:', subtractedSensorIds.value)
+  
+  if (!rawPowerData.value || rawPowerData.value.length === 0) {
+    console.warn('⚠️ No power data loaded yet. Sensor subtraction will be applied when data is loaded.')
+    return
+  }
+  
   await applyAllSubtractions()
 }
 
@@ -1062,35 +1071,49 @@ const applySensorSubtractions = async () => {
     endDate.setHours(23, 59, 59, 999)
     
     console.log('Fetching history for sensors:', subtractedSensorIds.value)
+    console.log('Date range:', startDate.toISOString(), 'to', endDate.toISOString())
     
     // Fetch history for each sensor
     for (const sensorId of subtractedSensorIds.value) {
       try {
-        console.log(`Fetching history for ${sensorId}...`)
+        console.log(`📡 Fetching history for ${sensorId}...`)
         const sensorHistory = await fetchHistory(haUrl.value, haToken.value, sensorId, startDate, endDate)
         
-        console.log(`Got ${sensorHistory.length} data points for ${sensorId}`)
+        console.log(`✅ Got ${sensorHistory.length} data points for ${sensorId}`)
         
         const sensorData = sensorHistory.map(item => ({
           timestamp: item.last_changed,
           value: parseFloat(item.state)
         })).filter(item => !isNaN(item.value))
         
-        console.log(`Processed ${sensorData.length} valid data points for ${sensorId}`)
+        console.log(`✅ Processed ${sensorData.length} valid data points for ${sensorId}`)
+        
+        if (sensorData.length === 0) {
+          console.warn(`⚠️ No valid data points for ${sensorId}, skipping subtraction`)
+          showToast(`No data available for ${sensorId}`, 'error')
+          continue
+        }
         
         // Subtract sensor data from power data
+        const beforeLength = powerData.value.length
         powerData.value = subtractSensorData(powerData.value, sensorData)
-        console.log(`Subtraction complete for ${sensorId}`)
+        console.log(`✅ Subtraction complete for ${sensorId} (${beforeLength} -> ${powerData.value.length} data points)`)
+        
+        showToast(`Subtracted ${sensorId}`, 'success')
         
       } catch (err) {
-        console.error(`Failed to fetch history for ${sensorId}:`, err)
-        error.value = `Warning: Failed to subtract ${sensorId}: ${err.message}`
+        console.error(`❌ Failed to fetch history for ${sensorId}:`, err)
+        const errorMsg = `Failed to subtract ${sensorId}: ${err.message}`
+        error.value = errorMsg
+        showToast(errorMsg, 'error')
       }
     }
     
   } catch (err) {
-    console.error('Error applying sensor subtractions:', err)
-    error.value = 'Failed to apply sensor subtractions: ' + err.message
+    console.error('❌ Error applying sensor subtractions:', err)
+    const errorMsg = 'Failed to apply sensor subtractions: ' + err.message
+    error.value = errorMsg
+    showToast(errorMsg, 'error')
   }
 }
 

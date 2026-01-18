@@ -595,6 +595,7 @@ const addSensorToSubtract = async () => {
   const sensor = availableSensors.value.find(s => s.entity_id === selectedSensorToAdd.value)
   if (!sensor) {
     console.log('❌ Sensor not found in availableSensors:', selectedSensorToAdd.value)
+    showToast('Sensor not found', 'error')
     return
   }
   
@@ -603,6 +604,7 @@ const addSensorToSubtract = async () => {
   // Check if already added
   if (subtractedSensors.value.some(s => s.entity_id === sensor.entity_id)) {
     console.log('⚠️ Sensor already in list')
+    showToast('Sensor already added', 'info')
     selectedSensorToAdd.value = ''
     return
   }
@@ -614,6 +616,9 @@ const addSensorToSubtract = async () => {
   // Save to localStorage
   localStorage.setItem('subtractedSensors', JSON.stringify(subtractedSensors.value))
   
+  // Show feedback
+  showToast(`Added ${sensor.friendly_name || sensor.entity_id} for subtraction`, 'success')
+  
   // Fetch history and emit event
   await fetchAndSubtractSensorData(sensor.entity_id)
   
@@ -622,10 +627,16 @@ const addSensorToSubtract = async () => {
 
 // Remove sensor subtraction
 const removeSensorSubtraction = (entityId) => {
+  const sensor = subtractedSensors.value.find(s => s.entity_id === entityId)
+  const sensorName = sensor?.friendly_name || entityId
+  
   subtractedSensors.value = subtractedSensors.value.filter(s => s.entity_id !== entityId)
   
   // Save to localStorage
   localStorage.setItem('subtractedSensors', JSON.stringify(subtractedSensors.value))
+  
+  // Show feedback
+  showToast(`Removed ${sensorName} from subtraction`, 'success')
   
   // Emit event to recalculate chart data
   emit('sensors-changed', subtractedSensors.value.map(s => s.entity_id))
@@ -689,8 +700,11 @@ const loadStoredSensors = () => {
   if (storedSubtracted) {
     subtractedSensors.value = JSON.parse(storedSubtracted)
     console.log('Loaded subtracted sensors from storage:', subtractedSensors.value.map(s => s.entity_id))
+    console.log('Emitting sensors-changed on mount with:', subtractedSensors.value.map(s => s.entity_id))
     // Emit to parent on load
     emit('sensors-changed', subtractedSensors.value.map(s => s.entity_id))
+  } else {
+    console.log('No subtracted sensors found in storage')
   }
 }
 
