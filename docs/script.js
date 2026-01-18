@@ -1,3 +1,16 @@
+// Performance Optimization: Debounce Function
+function debounce(func, wait = 10) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
 // Mobile Menu Toggle
 document.addEventListener('DOMContentLoaded', () => {
     const mobileMenuToggle = document.querySelector('.mobile-menu-toggle');
@@ -115,11 +128,10 @@ document.querySelectorAll('.feature-card, .step, .use-case, .tech-item').forEach
     observer.observe(el);
 });
 
-// Navbar Background on Scroll
+// Navbar Background and Parallax on Scroll
 let lastScroll = 0;
 const navbar = document.querySelector('.navbar');
 
-// Parallax Effect for Hero Section
 function handleScroll() {
     const currentScroll = window.pageYOffset;
     
@@ -142,8 +154,36 @@ function handleScroll() {
     lastScroll = currentScroll;
 }
 
+// Add active state to navigation based on scroll position
+const sections = document.querySelectorAll('section[id]');
+
+function highlightNavigation() {
+    const scrollPosition = window.pageYOffset + 100;
+    
+    sections.forEach(section => {
+        const sectionTop = section.offsetTop;
+        const sectionHeight = section.offsetHeight;
+        const sectionId = section.getAttribute('id');
+        
+        if (scrollPosition >= sectionTop && scrollPosition < sectionTop + sectionHeight) {
+            document.querySelectorAll('.nav-menu a').forEach(link => {
+                link.classList.remove('active');
+                if (link.getAttribute('href') === `#${sectionId}`) {
+                    link.classList.add('active');
+                }
+            });
+        }
+    });
+}
+
+// Combined scroll handler for better performance
+function onScroll() {
+    handleScroll();
+    highlightNavigation();
+}
+
 // Use debounced scroll handler
-const debouncedScroll = debounce(handleScroll, 10);
+const debouncedScroll = debounce(onScroll, 10);
 window.addEventListener('scroll', debouncedScroll);
 
 // Add Loading Animation to Buttons
@@ -214,45 +254,6 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// Add active state to navigation based on scroll position
-const sections = document.querySelectorAll('section[id]');
-
-function highlightNavigation() {
-    const scrollPosition = window.pageYOffset + 100;
-    
-    sections.forEach(section => {
-        const sectionTop = section.offsetTop;
-        const sectionHeight = section.offsetHeight;
-        const sectionId = section.getAttribute('id');
-        
-        if (scrollPosition >= sectionTop && scrollPosition < sectionTop + sectionHeight) {
-            document.querySelectorAll('.nav-menu a').forEach(link => {
-                link.classList.remove('active');
-                if (link.getAttribute('href') === `#${sectionId}`) {
-                    link.classList.add('active');
-                }
-            });
-        }
-    });
-}
-
-// Performance Optimization: Debounce Scroll Events
-function debounce(func, wait = 10) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-}
-
-// Use debounced scroll handler for better performance
-const debouncedHighlightNav = debounce(highlightNavigation, 10);
-window.addEventListener('scroll', debouncedHighlightNav);
-
 // Lazy Load Images (when real screenshots are added)
 if ('IntersectionObserver' in window) {
     const imageObserver = new IntersectionObserver((entries, observer) => {
@@ -294,9 +295,14 @@ if (prefersReducedMotion) {
     // Disable animations for users who prefer reduced motion
     const style = document.createElement('style');
     style.textContent = `
-        * {
+        .feature-card,
+        .step,
+        .use-case,
+        .tech-item,
+        .power-line,
+        .power-chart-mockup {
             animation: none !important;
-            transition: none !important;
+            transition: opacity 0.3s ease, transform 0.3s ease !important;
         }
     `;
     document.head.appendChild(style);

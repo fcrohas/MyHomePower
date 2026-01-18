@@ -777,10 +777,22 @@ section {
     }
 }
 
-.feature-card,
-.step,
-.use-case {
-    animation: fadeInUp 0.6s ease-out;
+@media (prefers-reduced-motion: no-preference) {
+    .feature-card,
+    .step,
+    .use-case {
+        animation: fadeInUp 0.6s ease-out;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .feature-card,
+    .step,
+    .use-case {
+        animation: none;
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 /* Utilities */
