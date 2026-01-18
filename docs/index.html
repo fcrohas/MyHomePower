@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="MyHomePower - AI-powered home appliance power consumption monitoring using deep learning">
+    <meta name="keywords" content="power monitoring, home assistant, deep learning, energy dashboard, appliance detection">
+    <title>MyHomePower - AI-Powered Home Energy Monitoring</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <span class="logo">⚡</span>
+                <span class="brand-name">MyHomePower</span>
+            </div>
+            <ul class="nav-menu">
+                <li><a href="#features">Features</a></li>
+                <li><a href="#how-it-works">How It Works</a></li>
+                <li><a href="#demo">Demo</a></li>
+                <li><a href="#getting-started">Get Started</a></li>
+                <li><a href="https://github.com/fcrohas/MyHomePower" target="_blank" class="btn-primary">GitHub</a></li>
+            </ul>
+            <button class="mobile-menu-toggle" aria-label="Toggle menu">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <div class="hero-content">
+                <h1 class="hero-title">
+                    AI-Powered Home Energy Monitoring
+                </h1>
+                <p class="hero-subtitle">
+                    Measure per-appliance power consumption using deep learning. 
+                    Detect anomalies, export to Home Assistant, and share models with the community.
+                </p>
+                <div class="hero-buttons">
+                    <a href="https://github.com/fcrohas/MyHomePower" class="btn btn-large btn-primary">
+                        <span class="icon">🚀</span> Get Started
+                    </a>
+                    <a href="#demo" class="btn btn-large btn-secondary">
+                        <span class="icon">📊</span> See Demo
+                    </a>
+                </div>
+            </div>
+            <div class="hero-visual">
+                <div class="power-chart-mockup">
+                    <div class="chart-header">
+                        <span class="chart-icon">📈</span>
+                        <span>Power Consumption</span>
+                    </div>
+                    <div class="chart-area">
+                        <svg viewBox="0 0 400 200" class="chart-svg">
+                            <path d="M 0 180 Q 50 170 100 160 T 200 140 T 300 120 T 400 80" 
+                                  fill="none" 
+                                  stroke="url(#gradient)" 
+                                  stroke-width="3"
+                                  class="power-line"/>
+                            <defs>
+                                <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                    <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+                                    <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+                                </linearGradient>
+                            </defs>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="features">
+        <div class="container">
+            <h2 class="section-title">Powerful Features</h2>
+            <p class="section-subtitle">Everything you need to monitor and optimize your home energy usage</p>
+            
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🧠</div>
+                    <h3>Deep Learning</h3>
+                    <p>Advanced neural networks (CNN + LSTM) for accurate appliance power disaggregation using Seq2Point and GSP methods.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🔌</div>
+                    <h3>Appliance Detection</h3>
+                    <p>Automatically identify and track individual appliances from total power consumption data with high accuracy.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🏠</div>
+                    <h3>Home Assistant Integration</h3>
+                    <p>Seamlessly export predicted power data to Home Assistant Energy Dashboard for comprehensive energy monitoring.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🔬</div>
+                    <h3>Anomaly Detection</h3>
+                    <p>Use autoencoder neural networks to detect unusual appliance behavior and potential issues automatically.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">📚</div>
+                    <h3>Model Library</h3>
+                    <p>Import and share pre-trained models for various appliances. Build a community-driven model repository.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <h3>Interactive Visualization</h3>
+                    <p>Beautiful charts with Chart.js for analyzing power consumption patterns and tagging time periods.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🏷️</div>
+                    <h3>Manual Tagging</h3>
+                    <p>Click and drag to manually label time periods for training data creation and model validation.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">⚙️</div>
+                    <h3>Model Training</h3>
+                    <p>Train custom models for your specific appliances with real-time progress monitoring and validation.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works Section -->
+    <section id="how-it-works" class="how-it-works">
+        <div class="container">
+            <h2 class="section-title">How It Works</h2>
+            <p class="section-subtitle">From data collection to appliance identification in 4 simple steps</p>
+            
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h3>Connect to Home Assistant</h3>
+                        <p>Connect your Home Assistant instance to access real-time and historical power consumption data from your smart meter or power sensors.</p>
+                    </div>
+                </div>
+                
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h3>Tag Your Data</h3>
+                        <p>Manually label time periods when specific appliances are running to create training data for the deep learning models.</p>
+                    </div>
+                </div>
+                
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h3>Train Models</h3>
+                        <p>Use the ML Trainer to build custom models for each appliance, or import pre-trained models from the community library.</p>
+                    </div>
+                </div>
+                
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div class="step-content">
+                        <h3>Analyze & Monitor</h3>
+                        <p>Run predictions to disaggregate total power into individual appliances, detect anomalies, and export data to Home Assistant Energy Dashboard.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Demo/Screenshots Section -->
+    <section id="demo" class="demo">
+        <div class="container">
+            <h2 class="section-title">See It In Action</h2>
+            <p class="section-subtitle">Explore the key features through interactive screenshots</p>
+            
+            <div class="demo-tabs">
+                <button class="demo-tab active" data-tab="power-viewer">Power Viewer</button>
+                <button class="demo-tab" data-tab="ml-trainer">ML Trainer</button>
+                <button class="demo-tab" data-tab="library">Model Library</button>
+                <button class="demo-tab" data-tab="anomaly">Anomaly Detector</button>
+            </div>
+            
+            <div class="demo-content">
+                <div class="demo-panel active" id="power-viewer">
+                    <div class="demo-description">
+                        <h3>📊 Power Viewer</h3>
+                        <p>Interactive charts for visualizing power consumption with manual tagging capabilities. Click and drag to select time periods and label them with appliance names.</p>
+                        <ul>
+                            <li>Real-time data from Home Assistant</li>
+                            <li>Day navigation with date picker</li>
+                            <li>Tag statistics and breakdown</li>
+                            <li>Export training data</li>
+                        </ul>
+                    </div>
+                    <div class="demo-screenshot">
+                        <div class="screenshot-placeholder">
+                            <span class="placeholder-icon">📊</span>
+                            <p>Power Viewer Interface</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="demo-panel" id="ml-trainer">
+                    <div class="demo-description">
+                        <h3>🧠 ML Trainer</h3>
+                        <p>Train deep learning models using Seq2Point CNN+LSTM architecture. Watch real-time training progress with loss curves and accuracy metrics.</p>
+                        <ul>
+                            <li>Multiple model architectures</li>
+                            <li>Real-time training visualization</li>
+                            <li>Model validation and testing</li>
+                            <li>Save and load trained models</li>
+                        </ul>
+                    </div>
+                    <div class="demo-screenshot">
+                        <div class="screenshot-placeholder">
+                            <span class="placeholder-icon">🧠</span>
+                            <p>ML Training Dashboard</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="demo-panel" id="library">
+                    <div class="demo-description">
+                        <h3>📚 Model Library</h3>
+                        <p>Manage and share appliance models with technical specifications, power properties, and trained model links.</p>
+                        <ul>
+                            <li>Import/export model cards</li>
+                            <li>8 pre-configured sample models</li>
+                            <li>Technical specs tracking</li>
+                            <li>Community model sharing</li>
+                        </ul>
+                    </div>
+                    <div class="demo-screenshot">
+                        <div class="screenshot-placeholder">
+                            <span class="placeholder-icon">📚</span>
+                            <p>Appliance Model Library</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="demo-panel" id="anomaly">
+                    <div class="demo-description">
+                        <h3>🔬 Anomaly Detector</h3>
+                        <p>Detect unusual appliance behavior using autoencoder neural networks. Identify potential issues before they become problems.</p>
+                        <ul>
+                            <li>Unsupervised anomaly detection</li>
+                            <li>Adjustable sensitivity threshold</li>
+                            <li>Visual reconstruction comparison</li>
+                            <li>Timeline overview of anomalies</li>
+                        </ul>
+                    </div>
+                    <div class="demo-screenshot">
+                        <div class="screenshot-placeholder">
+                            <span class="placeholder-icon">🔬</span>
+                            <p>Anomaly Detection Interface</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Technology Stack Section -->
+    <section class="tech-stack">
+        <div class="container">
+            <h2 class="section-title">Built With Modern Technologies</h2>
+            <div class="tech-grid">
+                <div class="tech-item">
+                    <div class="tech-icon">⚛️</div>
+                    <div class="tech-name">Vue 3</div>
+                    <div class="tech-description">Composition API</div>
+                </div>
+                <div class="tech-item">
+                    <div class="tech-icon">🧠</div>
+                    <div class="tech-name">TensorFlow.js</div>
+                    <div class="tech-description">Deep Learning</div>
+                </div>
+                <div class="tech-item">
+                    <div class="tech-icon">📊</div>
+                    <div class="tech-name">Chart.js</div>
+                    <div class="tech-description">Visualization</div>
+                </div>
+                <div class="tech-item">
+                    <div class="tech-icon">🏠</div>
+                    <div class="tech-name">Home Assistant</div>
+                    <div class="tech-description">Integration</div>
+                </div>
+                <div class="tech-item">
+                    <div class="tech-icon">🚀</div>
+                    <div class="tech-name">Vite</div>
+                    <div class="tech-description">Build Tool</div>
+                </div>
+                <div class="tech-item">
+                    <div class="tech-icon">⚙️</div>
+                    <div class="tech-name">Express</div>
+                    <div class="tech-description">Backend API</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Getting Started Section -->
+    <section id="getting-started" class="getting-started">
+        <div class="container">
+            <h2 class="section-title">Get Started in Minutes</h2>
+            <p class="section-subtitle">Quick and easy installation</p>
+            
+            <div class="install-steps">
+                <div class="code-block">
+                    <div class="code-header">
+                        <span>📦 Installation</span>
+                        <button class="copy-btn" data-copy="install">Copy</button>
+                    </div>
+                    <pre><code id="install-code"># Clone the repository
+git clone https://github.com/fcrohas/MyHomePower.git
+cd MyHomePower
+
+# Install dependencies
+npm install
+
+# Start the application
+npm run dev:all</code></pre>
+                </div>
+                
+                <div class="requirements">
+                    <h3>Prerequisites</h3>
+                    <ul>
+                        <li>✅ Node.js (v16 or higher)</li>
+                        <li>✅ Home Assistant instance with REST API</li>
+                        <li>✅ Long-lived access token from Home Assistant</li>
+                        <li>✅ Power sensor entity in Home Assistant</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="quick-links">
+                <a href="https://github.com/fcrohas/MyHomePower/blob/main/README.md" class="quick-link">
+                    <span class="link-icon">📖</span>
+                    <span>Full Documentation</span>
+                </a>
+                <a href="https://github.com/fcrohas/MyHomePower/blob/main/QUICKSTART.md" class="quick-link">
+                    <span class="link-icon">🚀</span>
+                    <span>Quick Start Guide</span>
+                </a>
+                <a href="https://github.com/fcrohas/MyHomePower/blob/main/ML_QUICKSTART.md" class="quick-link">
+                    <span class="link-icon">🧠</span>
+                    <span>ML Training Guide</span>
+                </a>
+                <a href="https://github.com/fcrohas/MyHomePower/blob/main/LIBRARY_QUICKSTART.md" class="quick-link">
+                    <span class="link-icon">📚</span>
+                    <span>Library Guide</span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Use Cases Section -->
+    <section class="use-cases">
+        <div class="container">
+            <h2 class="section-title">Real-World Applications</h2>
+            <div class="use-cases-grid">
+                <div class="use-case">
+                    <div class="use-case-icon">💡</div>
+                    <h3>Energy Optimization</h3>
+                    <p>Identify high-consumption appliances and find opportunities to reduce energy costs by shifting usage to off-peak hours.</p>
+                </div>
+                <div class="use-case">
+                    <div class="use-case-icon">🔧</div>
+                    <h3>Predictive Maintenance</h3>
+                    <p>Detect anomalies in appliance behavior that may indicate upcoming failures or maintenance needs.</p>
+                </div>
+                <div class="use-case">
+                    <div class="use-case-icon">📈</div>
+                    <h3>Consumption Analysis</h3>
+                    <p>Track and analyze power consumption patterns over time to understand your home energy usage better.</p>
+                </div>
+                <div class="use-case">
+                    <div class="use-case-icon">🎯</div>
+                    <h3>Goal Tracking</h3>
+                    <p>Set and monitor energy reduction goals with detailed appliance-level insights and progress tracking.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="cta">
+        <div class="container">
+            <h2>Ready to Start Monitoring Your Home Power?</h2>
+            <p>Join the community and take control of your energy consumption today</p>
+            <div class="cta-buttons">
+                <a href="https://github.com/fcrohas/MyHomePower" class="btn btn-large btn-primary">
+                    <span class="icon">⭐</span> Star on GitHub
+                </a>
+                <a href="https://github.com/fcrohas/MyHomePower/issues" class="btn btn-large btn-secondary">
+                    <span class="icon">💬</span> Report Issues
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h4>MyHomePower</h4>
+                    <p>AI-powered home energy monitoring with deep learning</p>
+                </div>
+                <div class="footer-section">
+                    <h4>Documentation</h4>
+                    <ul>
+                        <li><a href="https://github.com/fcrohas/MyHomePower/blob/main/README.md">README</a></li>
+                        <li><a href="https://github.com/fcrohas/MyHomePower/blob/main/QUICKSTART.md">Quick Start</a></li>
+                        <li><a href="https://github.com/fcrohas/MyHomePower/blob/main/API_DOCS.md">API Docs</a></li>
+                        <li><a href="https://github.com/fcrohas/MyHomePower/blob/main/ML_FEATURE.md">ML Features</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h4>Features</h4>
+                    <ul>
+                        <li><a href="https://github.com/fcrohas/MyHomePower/blob/main/ANOMALY_DETECTOR_FEATURE.md">Anomaly Detection</a></li>
+                        <li><a href="https://github.com/fcrohas/MyHomePower/blob/main/LIBRARY_FEATURE.md">Model Library</a></li>
+                        <li><a href="https://github.com/fcrohas/MyHomePower/blob/main/HA_SENSOR_SYNC_FEATURE.md">Home Assistant Sync</a></li>
+                        <li><a href="https://github.com/fcrohas/MyHomePower/blob/main/SEQ2POINT_IMPLEMENTATION.md">Seq2Point</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h4>Community</h4>
+                    <ul>
+                        <li><a href="https://github.com/fcrohas/MyHomePower">GitHub</a></li>
+                        <li><a href="https://github.com/fcrohas/MyHomePower/issues">Issues</a></li>
+                        <li><a href="https://github.com/fcrohas/MyHomePower/pulls">Pull Requests</a></li>
+                        <li><a href="https://github.com/fcrohas/MyHomePower/blob/main/LICENSE">License</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>© 2024 MyHomePower. Licensed under CC BY-NC-SA 4.0</p>
+                <p>Built with ❤️ and Vue.js</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
