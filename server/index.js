@@ -14,8 +14,8 @@ import { SlidingWindowPredictor } from './ml/slidingWindowPredictor.js'
 import { PowerAutoencoder } from './ml/autoencoder.js'
 import { loadAllData, prepareTrainingData, createTensors, preparePredictionInput } from './ml/dataPreprocessing.js'
 import { prepareSeq2PointInput, denormalizePower } from './ml/seq2pointPreprocessing.js'
-import { disaggregatePower } from './ml/gspDisaggregator.js'
 import AutoPredictor from './auto-predictor.js'
+import RepositoryManager from './managers/RepositoryManager.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -52,16 +52,6 @@ let appSettings = {
   detector: {
     threshold: 0.25,
     useSeq2Point: true,
-    useGSP: false,
-    gspConfig: {
-      sigma: 20,
-      ri: 0.15,
-      T_Positive: 20,
-      T_Negative: -20,
-      alpha: 0.5,
-      beta: 0.5,
-      instancelimit: 3
-    },
     autoSyncToHA: false,
     autoRunEnabled: false
   }
@@ -119,14 +109,49 @@ let autoencoderModels = new Map() // Map of tag -> autoencoder model
 
 // Helper function to sanitize appliance names for file system usage
 function sanitizeApplianceName(appliance) {
+  // Handle null, undefined, or empty strings
+  if (!appliance || appliance.trim() === '') {
+    return 'unknown'
+  }
   // Replace spaces and special characters with underscores
-  return appliance.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '_')
+  const sanitized = appliance.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '_')
+  // Handle case where all characters were special characters
+  return sanitized || 'unknown'
 }
 
 // Track which models should use ONNX inference
 const useOnnxForModel = new Map() // Map of appliance -> boolean
 
 let autoencoderTraining = new Map() // Map of tag -> training status
+
+// Initialize Repository Manager
+console.log('📚 Initializing Model Library...')
+const repoManager = new RepositoryManager()
+
+// Log repository setup status
+setTimeout(() => {
+  const repos = repoManager.getRepositories()
+  const officialRepo = repos.find(r => r.type === 'official')
+  if (officialRepo && !officialRepo.lastSync) {
+    console.log('')
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+    console.log('📦 ONLINE LIBRARY SETUP')
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+    console.log('The official model repository is not accessible yet.')
+    console.log('')
+    console.log('To set it up:')
+    console.log('1. Create a GitHub repository: fcrohas/MyHomePower-Models')
+    console.log('2. Add an index.json file (see SAMPLE_index.json)')
+    console.log('3. Models will sync automatically')
+    console.log('')
+    console.log('For now, you can:')
+    console.log('✓ Use local library features (add, import, export)')
+    console.log('✓ Share models using the Share Model wizard')
+    console.log('✓ Add custom repository URLs')
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+    console.log('')
+  }
+}, 2000)
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -4108,6 +4133,470 @@ app.post('/api/library/import', async (req, res) => {
   }
 })
 
+// ============================================================================
+// REPOSITORY MANAGEMENT ENDPOINTS
+// ============================================================================
+
+// Get all repositories
+app.get('/api/library/repositories', (req, res) => {
+  try {
+    const repositories = repoManager.getRepositories()
+    res.json(repositories)
+  } catch (error) {
+    console.error('Error getting repositories:', error)
+    res.status(500).json({ 
+      error: 'Failed to get repositories',
+      message: error.message 
+    })
+  }
+})
+
+// Add a new repository
+app.post('/api/library/repositories', async (req, res) => {
+  try {
+    const { name, url } = req.body
+    
+    if (!name || !url) {
+      return res.status(400).json({ error: 'Missing required fields: name, url' })
+    }
+
+    // Validate URL format
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      return res.status(400).json({ error: 'Invalid URL: must start with http:// or https://' })
+    }
+
+    // Validate repository by trying to fetch index.json
+    const validation = await repoManager.validateRepository(url)
+    if (!validation.valid) {
+      return res.status(400).json({ 
+        error: 'Invalid repository',
+        message: validation.error 
+      })
+    }
+
+    // Add repository
+    const repo = repoManager.addRepository(name, url)
+    
+    // Refresh it to cache the index
+    await repoManager.refreshRepository(repo.id)
+
+    console.log(`✅ Added repository: ${name}`)
+    res.json(repo)
+  } catch (error) {
+    console.error('Error adding repository:', error)
+    res.status(500).json({ 
+      error: 'Failed to add repository',
+      message: error.message 
+    })
+  }
+})
+
+// Update repository
+app.put('/api/library/repositories/:id', (req, res) => {
+  try {
+    const { id } = req.params
+    const updates = req.body
+
+    const repo = repoManager.updateRepository(id, updates)
+    console.log(`✅ Updated repository: ${repo.name}`)
+    res.json(repo)
+  } catch (error) {
+    console.error('Error updating repository:', error)
+    res.status(500).json({ 
+      error: 'Failed to update repository',
+      message: error.message 
+    })
+  }
+})
+
+// Delete a repository
+app.delete('/api/library/repositories/:id', (req, res) => {
+  try {
+    const { id } = req.params
+    repoManager.removeRepository(id)
+    console.log(`🗑️ Removed repository: ${id}`)
+    res.json({ success: true })
+  } catch (error) {
+    console.error('Error deleting repository:', error)
+    res.status(500).json({ 
+      error: 'Failed to delete repository',
+      message: error.message 
+    })
+  }
+})
+
+// Refresh a repository
+app.post('/api/library/repositories/:id/refresh', async (req, res) => {
+  try {
+    const { id } = req.params
+    const result = await repoManager.refreshRepository(id)
+    
+    if (result.success) {
+      console.log(`🔄 Refreshed repository: ${id} (${result.modelCount} models)`)
+      res.json(result)
+    } else {
+      res.status(500).json(result)
+    }
+  } catch (error) {
+    console.error('Error refreshing repository:', error)
+    res.status(500).json({ 
+      error: 'Failed to refresh repository',
+      message: error.message 
+    })
+  }
+})
+
+// Refresh all repositories
+app.post('/api/library/repositories/refresh-all', async (req, res) => {
+  try {
+    const results = await repoManager.refreshAllRepositories()
+    console.log(`🔄 Refreshed all repositories`)
+    res.json(results)
+  } catch (error) {
+    console.error('Error refreshing all repositories:', error)
+    res.status(500).json({ 
+      error: 'Failed to refresh all repositories',
+      message: error.message 
+    })
+  }
+})
+
+// Get all online models (from all or specific repository)
+app.get('/api/library/online', async (req, res) => {
+  try {
+    const { repoId } = req.query
+    const models = await repoManager.getOnlineModels(repoId || null)
+    res.json(models)
+  } catch (error) {
+    console.error('Error getting online models:', error)
+    res.status(500).json({ 
+      error: 'Failed to get online models',
+      message: error.message 
+    })
+  }
+})
+
+// Get specific online model details
+app.get('/api/library/online/:repoId/:modelId', async (req, res) => {
+  try {
+    const { repoId, modelId } = req.params
+    const model = await repoManager.getOnlineModel(repoId, modelId)
+    
+    if (!model) {
+      return res.status(404).json({ error: 'Model not found' })
+    }
+    
+    res.json(model)
+  } catch (error) {
+    console.error('Error getting online model:', error)
+    res.status(500).json({ 
+      error: 'Failed to get online model',
+      message: error.message 
+    })
+  }
+})
+
+// Download model from repository to local library
+app.post('/api/library/online/:repoId/:modelId/download', async (req, res) => {
+  try {
+    const { repoId, modelId } = req.params
+    const AdmZip = await import('adm-zip')
+    
+    console.log(`📥 Downloading model ${modelId} from repository ${repoId}`)
+    
+    // Download model files
+    const { modelFile, metadata, tempDir } = await repoManager.downloadModel(repoId, modelId)
+    
+    // Load existing library
+    const libraryPath = path.join(__dirname, 'library', 'models.json')
+    const libraryDir = path.join(__dirname, 'library')
+    
+    if (!fs.existsSync(libraryDir)) {
+      fs.mkdirSync(libraryDir, { recursive: true })
+    }
+    
+    let libraryData = { models: [] }
+    if (fs.existsSync(libraryPath)) {
+      libraryData = JSON.parse(fs.readFileSync(libraryPath, 'utf-8'))
+    }
+    
+    // Check if model already exists in local library
+    const existingModelIndex = libraryData.models.findIndex(m => 
+      m.name === metadata.name && 
+      m.manufacturer === metadata.manufacturer && 
+      m.modelNumber === metadata.modelNumber
+    )
+    
+    if (existingModelIndex !== -1) {
+      repoManager.cleanupTempDir(tempDir)
+      return res.status(400).json({ 
+        error: 'Model already exists in your library',
+        existingModel: libraryData.models[existingModelIndex]
+      })
+    }
+    
+    let hasTrainedModel = false
+    let applianceName = null
+    
+    // If it's a ZIP file, extract the trained model
+    if (modelFile.endsWith('.zip')) {
+      const zip = new AdmZip.default(modelFile)
+      const zipEntries = zip.getEntries()
+      
+      // Find model files
+      const hasModelJson = zipEntries.some(e => e.entryName.includes('model.json'))
+      
+      if (hasModelJson) {
+        // Extract to saved_models directory
+        applianceName = sanitizeApplianceName(metadata.deviceType || metadata.name)
+        const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${applianceName}_model`)
+        
+        // Remove existing model if present
+        if (fs.existsSync(modelDir)) {
+          fs.rmSync(modelDir, { recursive: true, force: true })
+        }
+        fs.mkdirSync(modelDir, { recursive: true })
+        
+        // Extract all files
+        zipEntries.forEach(entry => {
+          if (!entry.isDirectory) {
+            const filePath = path.join(modelDir, entry.entryName)
+            const fileDir = path.dirname(filePath)
+            if (!fs.existsSync(fileDir)) {
+              fs.mkdirSync(fileDir, { recursive: true })
+            }
+            fs.writeFileSync(filePath, entry.getData())
+          }
+        })
+        
+        hasTrainedModel = true
+      }
+    }
+    
+    // Create library entry
+    const newModel = {
+      id: Date.now().toString(),
+      name: metadata.name,
+      description: metadata.description || '',
+      deviceType: metadata.deviceType || '',
+      manufacturer: metadata.manufacturer || '',
+      modelNumber: metadata.modelNumber || '',
+      properties: metadata.properties || {
+        powerMin: 0,
+        powerMax: 1000,
+        hasOnOff: true,
+        annualPowerWh: 0
+      },
+      hasTrainedModel,
+      linkedApplianceName: applianceName,
+      sourceRepository: repoId,
+      sourceModelId: modelId,
+      downloadedAt: new Date().toISOString(),
+      metadata: {
+        author: metadata.metadata?.author || 'Unknown',
+        uploadDate: metadata.metadata?.uploadDate,
+        version: metadata.metadata?.version || '1.0.0',
+        trainingInfo: metadata.metadata?.trainingInfo
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+    
+    libraryData.models.push(newModel)
+    fs.writeFileSync(libraryPath, JSON.stringify(libraryData, null, 2))
+    
+    // Cleanup temp directory
+    repoManager.cleanupTempDir(tempDir)
+    
+    console.log(`✅ Downloaded and imported model: ${newModel.name}`)
+    res.json({ 
+      success: true,
+      model: newModel,
+      hasTrainedModel
+    })
+    
+  } catch (error) {
+    console.error('Error downloading model:', error)
+    res.status(500).json({ 
+      error: 'Failed to download model',
+      message: error.message 
+    })
+  }
+})
+
+// Export model for Git sharing (prepare files for repository submission)
+app.post('/api/library/export-for-git/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+    const AdmZip = await import('adm-zip')
+    
+    const libraryPath = path.join(__dirname, 'library', 'models.json')
+    
+    if (!fs.existsSync(libraryPath)) {
+      return res.status(404).json({ error: 'Library not found' })
+    }
+    
+    const libraryData = JSON.parse(fs.readFileSync(libraryPath, 'utf-8'))
+    const model = libraryData.models.find(m => m.id === id)
+    
+    if (!model) {
+      return res.status(404).json({ error: 'Model not found' })
+    }
+    
+    console.log('📋 Exporting model:', { 
+      id: model.id, 
+      name: model.name,
+      deviceType: model.deviceType,
+      manufacturer: model.manufacturer,
+      modelNumber: model.modelNumber,
+      hasTrainedModel: model.hasTrainedModel,
+      linkedApplianceName: model.linkedApplianceName
+    })
+    
+    const zip = new AdmZip.default()
+    
+    // Safely get values with defaults
+    const manufacturer = model.manufacturer || model.deviceInfo?.brand || 'Unknown'
+    const modelNumber = model.modelNumber || model.deviceInfo?.model || 'Unknown'
+    const deviceType = model.deviceType || model.linkedApplianceName || 'appliance'
+    
+    // Create metadata.json for the repository
+    const repoMetadata = {
+      id: `${sanitizeApplianceName(manufacturer)}-${sanitizeApplianceName(modelNumber)}-${Date.now()}`,
+      name: model.name || `${deviceType} Model`,
+      deviceType: deviceType,
+      manufacturer: manufacturer,
+      modelNumber: modelNumber,
+      description: model.description || '',
+      properties: model.properties || {},
+      metadata: {
+        author: req.body.author || 'Anonymous',
+        uploadDate: new Date().toISOString(),
+        version: req.body.version || '1.0.0',
+        trainingInfo: model.metadata?.trainingInfo || model.trainingInfo || {},
+        visibility: req.body.visibility || 'public'
+      },
+      files: {
+        metadata: `models/${sanitizeApplianceName(deviceType)}/${sanitizeApplianceName(model.name || deviceType)}/metadata.json`,
+        model: `models/${sanitizeApplianceName(deviceType)}/${sanitizeApplianceName(model.name || deviceType)}/model.zip`
+      }
+    }
+    
+    // Add metadata.json
+    zip.addFile('metadata.json', Buffer.from(JSON.stringify(repoMetadata, null, 2)))
+    
+    // If model has trained files, include them
+    if (model.hasTrainedModel && model.linkedApplianceName) {
+      const modelDir = path.join(__dirname, 'ml', 'saved_models', `seq2point_${model.linkedApplianceName}_model`)
+      
+      if (fs.existsSync(modelDir)) {
+        // Add all files from model directory
+        const addFilesRecursively = (dir, zipPath = '') => {
+          const files = fs.readdirSync(dir)
+          files.forEach(file => {
+            const filePath = path.join(dir, file)
+            const stat = fs.statSync(filePath)
+            
+            if (stat.isDirectory()) {
+              addFilesRecursively(filePath, path.join(zipPath, file))
+            } else {
+              const content = fs.readFileSync(filePath)
+              zip.addFile(path.join('model', zipPath, file), content)
+            }
+          })
+        }
+        
+        addFilesRecursively(modelDir)
+      }
+    }
+    
+    // Generate index.json entry
+    const indexEntry = {
+      id: repoMetadata.id,
+      name: repoMetadata.name,
+      deviceType: repoMetadata.deviceType,
+      manufacturer: repoMetadata.manufacturer,
+      modelNumber: repoMetadata.modelNumber,
+      description: repoMetadata.description,
+      properties: repoMetadata.properties,
+      metadata: repoMetadata.metadata,
+      files: repoMetadata.files,
+      visibility: repoMetadata.metadata.visibility,
+      size: 0 // Will be calculated after upload
+    }
+    
+    // Add README with instructions
+    const instructions = `# Sharing ${repoMetadata.name} to MyHomePower Models Repository
+
+## Files Included
+- metadata.json: Model metadata and configuration
+- model/: Trained model files (if available)
+
+## Instructions to Share
+
+1. Fork the repository at: https://github.com/fcrohas/MyHomePower-Models
+
+2. Clone your fork locally:
+   \`\`\`bash
+   git clone https://github.com/YOUR_USERNAME/MyHomePower-Models.git
+   cd MyHomePower-Models
+   \`\`\`
+
+3. Create the model directory:
+   \`\`\`bash
+   mkdir -p models/${sanitizeApplianceName(deviceType)}/${sanitizeApplianceName(repoMetadata.name)}
+   \`\`\`
+
+4. Extract the contents of this ZIP into that directory
+
+5. Update the index.json file by adding this entry to the "models" array:
+   \`\`\`json
+   ${JSON.stringify(indexEntry, null, 2)}
+   \`\`\`
+
+6. Commit and push:
+   \`\`\`bash
+   git add .
+   git commit -m "Add ${repoMetadata.name} model"
+   git push origin main
+   \`\`\`
+
+7. Create a Pull Request on GitHub
+
+## Model Information
+- Name: ${repoMetadata.name}
+- Type: ${deviceType}
+- Manufacturer: ${manufacturer}
+- Model Number: ${modelNumber}
+- Has Trained Model: ${model.hasTrainedModel ? 'Yes' : 'No'}
+
+Thank you for contributing to the MyHomePower Models community!
+`
+    
+    zip.addFile('README.md', Buffer.from(instructions))
+    zip.addFile('index-entry.json', Buffer.from(JSON.stringify(indexEntry, null, 2)))
+    
+    // Send the ZIP file
+    const zipBuffer = zip.toBuffer()
+    
+    const safeFilename = sanitizeApplianceName(repoMetadata.name || deviceType)
+    res.setHeader('Content-Type', 'application/zip')
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}_git_export.zip"`)
+    res.send(zipBuffer)
+    
+    console.log(`📤 Exported model for Git sharing: ${repoMetadata.name}`)
+    
+  } catch (error) {
+    console.error('Error exporting model for Git:', error)
+    console.error('Error stack:', error.stack)
+    res.status(500).json({ 
+      error: 'Failed to export model for Git',
+      message: error.message,
+      details: error.stack
+    })
+  }
+})
+
 // Link a trained TensorFlow model to a library model
 app.post('/api/library/models/:id/link', (req, res) => {
   try {
@@ -4293,99 +4782,6 @@ app.listen(PORT, () => {
     }
   }
 })
-
-// ============================================================
-// GSP NILM ENDPOINTS
-// ============================================================
-
-// GSP Disaggregation - Analyze day
-app.post('/api/gsp/analyze-day', async (req, res) => {
-  try {
-    const { date, powerData, config } = req.body
-
-    if (!date) {
-      return res.status(400).json({ error: 'Missing date parameter' })
-    }
-
-    if (!powerData || !Array.isArray(powerData)) {
-      return res.status(400).json({ error: 'Missing or invalid powerData array' })
-    }
-
-    // Format power data for GSP
-    const formattedData = powerData.map(dp => ({
-      timestamp: dp.timestamp || dp.last_changed || dp.last_updated,
-      power: parseFloat(dp.power || dp.value || dp.state || 0)
-    }))
-
-    console.log(`Running GSP disaggregation for ${date} with ${formattedData.length} data points`)
-
-    // Run GSP disaggregation (pure JavaScript - no Python!)
-    const result = disaggregatePower(formattedData, config || null)
-
-    res.json({
-      success: true,
-      date,
-      appliances: result.appliances,
-      numAppliances: result.numAppliances,
-      config: result.config,
-      message: result.message
-    })
-
-  } catch (error) {
-    console.error('GSP analyze-day error:', error)
-    res.status(500).json({
-      error: 'Failed to run GSP analysis',
-      message: error.message
-    })
-  }
-})
-
-// Get GSP configuration info
-app.get('/api/gsp/config', (req, res) => {
-  res.json({
-    algorithm: 'GSP (Graph Signal Processing)',
-    description: 'Training-less energy disaggregation using graph signal processing',
-    trainingRequired: false,
-    parameters: {
-      sigma: {
-        default: 20,
-        description: 'Gaussian kernel parameter for clustering',
-        range: [5, 50]
-      },
-      ri: {
-        default: 0.15,
-        description: 'Coefficient of variation threshold',
-        range: [0.05, 0.3]
-      },
-      T_Positive: {
-        default: 20,
-        description: 'Positive event threshold in Watts',
-        range: [10, 100]
-      },
-      T_Negative: {
-        default: -20,
-        description: 'Negative event threshold in Watts',
-        range: [-100, -10]
-      },
-      alpha: {
-        default: 0.5,
-        description: 'Weight for magnitude matching (0-1)',
-        range: [0, 1]
-      },
-      beta: {
-        default: 0.5,
-        description: 'Weight for temporal matching (0-1)',
-        range: [0, 1]
-      },
-      instancelimit: {
-        default: 3,
-        description: 'Minimum number of appliance ON instances',
-        range: [2, 10]
-      }
-    }
-  })
-})
-// ============================================================================
 
 // Graceful shutdown
 process.on('SIGTERM', () => {

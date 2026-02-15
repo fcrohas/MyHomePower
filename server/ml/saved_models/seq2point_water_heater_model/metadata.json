@@ -1,6 +1,6 @@
 {
   "id": "seq2point_water_heater_model",
-  "name": "MSDC SP2On Water heater",
+  "name": "Water heater",
   "appliance": "water heater",
   "windowLength": 599,
   "mainsStats": {

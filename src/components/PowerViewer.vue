@@ -96,6 +96,14 @@
             <span class="sidebar-icon">⚙️</span>
             <span class="sidebar-label">Settings</span>
           </button>
+          <button 
+            :class="['sidebar-item', { active: activeTab === 'logs' }]"
+            @click="activeTab = 'logs'"
+            :title="sidebarCollapsed ? 'Backend Logs' : ''"
+          >
+            <span class="sidebar-icon">📔</span>
+            <span class="sidebar-label">Backend Logs</span>
+          </button>
         </nav>
 
         <!-- User Info / Logout -->
@@ -192,6 +200,11 @@
       <!-- Libraries Tab -->
       <div v-show="activeTab === 'libraries'" class="tab-content">
         <LibraryManager :preFillData="libraryPreFill" @data-used="libraryPreFill = null" @model-imported="handleModelImported" />
+      </div>
+
+      <!-- Backend Logs Tab -->
+      <div v-show="activeTab === 'logs'" class="tab-content">
+        <BackendLogs />
       </div>
 
       <!-- Settings Tab -->
@@ -302,101 +315,6 @@
                       <span class="checkbox-hint">Supervised ML - requires training per appliance</span>
                     </span>
                   </label>
-                </div>
-                
-                <div class="form-row-check">
-                  <label class="checkbox-label">
-                    <input type="checkbox" v-model="detectorSettings.useGSP" @change="saveDetectorSettings" />
-                    <span class="checkbox-text">
-                      <strong>Enable GSP energy disaggregation</strong>
-                      <span class="checkbox-hint">Training-less - auto-discovers all appliances</span>
-                    </span>
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div v-if="detectorSettings.useGSP" class="settings-group">
-              <div class="group-header">
-                <h3>GSP Advanced Configuration</h3>
-                <p class="group-description">Fine-tune GSP algorithm parameters</p>
-              </div>
-              <div class="group-body">
-                <div class="form-row">
-                  <label class="form-label">Clustering Sensitivity (σ)</label>
-                  <div class="form-input-wrapper">
-                    <div style="display: flex; align-items: center; gap: 1rem;">
-                      <input 
-                        type="range" 
-                        id="gsp-sigma" 
-                        v-model.number="detectorSettings.gspConfig.sigma" 
-                        min="5" 
-                        max="50" 
-                        step="5"
-                        @change="saveDetectorSettings"
-                        style="flex: 1;"
-                      />
-                      <span class="config-value">{{ detectorSettings.gspConfig.sigma }}</span>
-                    </div>
-                    <span class="form-hint">Controls how appliances are grouped together</span>
-                  </div>
-                </div>
-                <div class="form-row">
-                  <label class="form-label">Min ON Power (W)</label>
-                  <div class="form-input-wrapper">
-                    <div style="display: flex; align-items: center; gap: 1rem;">
-                      <input 
-                        type="range" 
-                        id="gsp-threshold-pos" 
-                        v-model.number="detectorSettings.gspConfig.T_Positive" 
-                        min="10" 
-                        max="100" 
-                        step="10"
-                        @change="saveDetectorSettings"
-                        style="flex: 1;"
-                      />
-                      <span class="config-value">{{ detectorSettings.gspConfig.T_Positive }}</span>
-                    </div>
-                    <span class="form-hint">Minimum power increase to detect appliance turning on</span>
-                  </div>
-                </div>
-                <div class="form-row">
-                  <label class="form-label">Min OFF Power (W)</label>
-                  <div class="form-input-wrapper">
-                    <div style="display: flex; align-items: center; gap: 1rem;">
-                      <input 
-                        type="range" 
-                        id="gsp-threshold-neg" 
-                        v-model.number="detectorSettings.gspConfig.T_Negative" 
-                        min="-100" 
-                        max="-10" 
-                        step="10"
-                        @change="saveDetectorSettings"
-                        style="flex: 1;"
-                      />
-                      <span class="config-value">{{ detectorSettings.gspConfig.T_Negative }}</span>
-                    </div>
-                    <span class="form-hint">Minimum power decrease to detect appliance turning off</span>
-                  </div>
-                </div>
-                <div class="form-row">
-                  <label class="form-label">Min Activations</label>
-                  <div class="form-input-wrapper">
-                    <div style="display: flex; align-items: center; gap: 1rem;">
-                      <input 
-                        type="range" 
-                        id="gsp-instances" 
-                        v-model.number="detectorSettings.gspConfig.instancelimit" 
-                        min="2" 
-                        max="10" 
-                        step="1"
-                        @change="saveDetectorSettings"
-                        style="flex: 1;"
-                      />
-                      <span class="config-value">{{ detectorSettings.gspConfig.instancelimit }}</span>
-                    </div>
-                    <span class="form-hint">Minimum number of times an appliance must be detected</span>
-                  </div>
                 </div>
               </div>
             </div>
@@ -533,6 +451,7 @@ import MLTrainer from './MLTrainer.vue'
 import PowerDetector from './PowerDetector.vue'
 import AnomalyDetector from './AnomalyDetector.vue'
 import LibraryManager from './LibraryManager.vue'
+import BackendLogs from './BackendLogs.vue'
 import { connectToHA, fetchHistory, exportDay } from '../services/homeassistant'
 
 // Authentication state
@@ -567,16 +486,6 @@ const settings = ref({
 const detectorSettings = ref({
   threshold: parseFloat(localStorage.getItem('detectorThreshold')) || 0.25,
   useSeq2Point: localStorage.getItem('detectorUseSeq2Point') !== 'false', // default true
-  useGSP: localStorage.getItem('detectorUseGSP') === 'true', // default false
-  gspConfig: {
-    sigma: parseInt(localStorage.getItem('detectorGspSigma')) || 20,
-    ri: 0.15,
-    T_Positive: parseInt(localStorage.getItem('detectorGspTPositive')) || 20,
-    T_Negative: parseInt(localStorage.getItem('detectorGspTNegative')) || -20,
-    alpha: 0.5,
-    beta: 0.5,
-    instancelimit: parseInt(localStorage.getItem('detectorGspInstanceLimit')) || 3
-  },
   autoSyncToHA: localStorage.getItem('autoSyncToHA') === 'true',
   autoRunEnabled: localStorage.getItem('autoRunEnabled') === 'true'
 })
@@ -1286,11 +1195,6 @@ const saveSettings = async () => {
 const saveDetectorSettings = async () => {
   localStorage.setItem('detectorThreshold', detectorSettings.value.threshold)
   localStorage.setItem('detectorUseSeq2Point', detectorSettings.value.useSeq2Point)
-  localStorage.setItem('detectorUseGSP', detectorSettings.value.useGSP)
-  localStorage.setItem('detectorGspSigma', detectorSettings.value.gspConfig.sigma)
-  localStorage.setItem('detectorGspTPositive', detectorSettings.value.gspConfig.T_Positive)
-  localStorage.setItem('detectorGspTNegative', detectorSettings.value.gspConfig.T_Negative)
-  localStorage.setItem('detectorGspInstanceLimit', detectorSettings.value.gspConfig.instancelimit)
   localStorage.setItem('autoSyncToHA', detectorSettings.value.autoSyncToHA)
   localStorage.setItem('autoRunEnabled', detectorSettings.value.autoRunEnabled)
   
@@ -1383,10 +1287,6 @@ const loadSettingsFromBackend = async () => {
           detectorSettings.value.useSeq2Point = data.detector.useSeq2Point
           localStorage.setItem('detectorUseSeq2Point', data.detector.useSeq2Point)
         }
-        if (data.detector.useGSP !== undefined) {
-          detectorSettings.value.useGSP = data.detector.useGSP
-          localStorage.setItem('detectorUseGSP', data.detector.useGSP)
-        }
         if (data.detector.autoSyncToHA !== undefined) {
           detectorSettings.value.autoSyncToHA = data.detector.autoSyncToHA
           localStorage.setItem('autoSyncToHA', data.detector.autoSyncToHA)
@@ -1394,24 +1294,6 @@ const loadSettingsFromBackend = async () => {
         if (data.detector.autoRunEnabled !== undefined) {
           detectorSettings.value.autoRunEnabled = data.detector.autoRunEnabled
           localStorage.setItem('autoRunEnabled', data.detector.autoRunEnabled)
-        }
-        if (data.detector.gspConfig) {
-          if (data.detector.gspConfig.sigma !== undefined) {
-            detectorSettings.value.gspConfig.sigma = data.detector.gspConfig.sigma
-            localStorage.setItem('detectorGspSigma', data.detector.gspConfig.sigma)
-          }
-          if (data.detector.gspConfig.T_Positive !== undefined) {
-            detectorSettings.value.gspConfig.T_Positive = data.detector.gspConfig.T_Positive
-            localStorage.setItem('detectorGspTPositive', data.detector.gspConfig.T_Positive)
-          }
-          if (data.detector.gspConfig.T_Negative !== undefined) {
-            detectorSettings.value.gspConfig.T_Negative = data.detector.gspConfig.T_Negative
-            localStorage.setItem('detectorGspTNegative', data.detector.gspConfig.T_Negative)
-          }
-          if (data.detector.gspConfig.instancelimit !== undefined) {
-            detectorSettings.value.gspConfig.instancelimit = data.detector.gspConfig.instancelimit
-            localStorage.setItem('detectorGspInstanceLimit', data.detector.gspConfig.instancelimit)
-          }
         }
       }
       

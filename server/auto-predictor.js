@@ -14,8 +14,14 @@ const __dirname = path.dirname(__filename)
 
 // Helper function to sanitize appliance names for file system usage
 function sanitizeApplianceName(appliance) {
+  // Handle null, undefined, or empty strings
+  if (!appliance || appliance.trim() === '') {
+    return 'unknown'
+  }
   // Replace spaces and special characters with underscores
-  return appliance.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '_')
+  const sanitized = appliance.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '_')
+  // Handle case where all characters were special characters
+  return sanitized || 'unknown'
 }
 
 class AutoPredictor {
@@ -33,17 +39,7 @@ class AutoPredictor {
       sessionId: null,
       useSeq2Point: true,
       selectedModels: [],
-      threshold: 0.25, // Detection threshold (same as frontend default)
-      useGSP: false,
-      gspConfig: {
-        sigma: 20,
-        ri: 0.15,
-        T_Positive: 20,
-        T_Negative: -20,
-        alpha: 0.5,
-        beta: 0.5,
-        instancelimit: 3
-      }
+      threshold: 0.25 // Detection threshold (same as frontend default)
     }
     this.lastRun = null
     this.lastStatus = 'Not started'
@@ -351,27 +347,6 @@ class AutoPredictor {
           } catch (error) {
             console.error(`  ✗ Failed to predict for ${appliance}:`, error.message)
           }
-        }
-      }
-
-      // Run GSP predictions if enabled
-      if (this.config.useGSP) {
-        console.log('🔍 Running GSP disaggregation')
-        
-        try {
-          const { disaggregatePower } = await import('./ml/gspDisaggregator.js')
-          const gspResult = await disaggregatePower(formattedPowerData, today, this.config.gspConfig)
-
-          if (gspResult.success && gspResult.appliances && gspResult.appliances.length > 0) {
-            gspResult.appliances.forEach(appliance => {
-              if (appliance.totalEnergy > 0) {
-                applianceEnergies[appliance.name] = appliance.totalEnergy
-                console.log(`  ✓ ${appliance.name}: ${appliance.totalEnergy.toFixed(2)} Wh`)
-              }
-            })
-          }
-        } catch (error) {
-          console.error('  ✗ GSP disaggregation failed:', error.message)
         }
       }
 

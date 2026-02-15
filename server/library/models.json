@@ -2,8 +2,8 @@
   "models": [
     {
       "id": "1767823915851",
-      "name": "Seq2Point climate",
-      "description": "Trained model for climate",
+      "name": "Climatisation Daikin Air/Air",
+      "description": "Modéle entrainé pour une cliamtisation Daikin Gainable 7kw",
       "deviceType": "air_conditioner",
       "manufacturer": "Daikin",
       "modelNumber": "FBA71",
@@ -15,16 +15,16 @@
       },
       "hasTrainedModel": true,
       "createdAt": "2026-01-07T22:11:55.851Z",
-      "updatedAt": "2026-01-07T22:11:55.851Z",
+      "updatedAt": "2026-01-18T20:32:00.981Z",
       "linkedApplianceName": "climate"
     },
     {
-      "id": "1768039129358",
-      "name": "Water heater",
-      "description": "Chauffe eau 300L atlantic",
+      "id": "1770582867527",
+      "name": "Chauffe eau 300L",
+      "description": "Chauffe-eau électrique 300 L - 3 000 W\nProvenance Brico Depot",
       "deviceType": "water_heater",
-      "manufacturer": "Atlantic",
-      "modelNumber": "CF300",
+      "manufacturer": "Acapulco",
+      "modelNumber": "5414849643161",
       "properties": {
         "powerMin": 0,
         "powerMax": 3000,
@@ -32,8 +32,25 @@
         "annualPowerWh": 0
       },
       "hasTrainedModel": false,
-      "createdAt": "2026-01-10T09:58:49.358Z",
-      "updatedAt": "2026-01-10T09:58:49.358Z"
+      "createdAt": "2026-02-08T20:34:27.527Z",
+      "updatedAt": "2026-02-08T20:34:27.527Z"
+    },
+    {
+      "id": "1771108200800",
+      "name": "Daikin Climate",
+      "description": "Daikin ducted air conditioning",
+      "deviceType": "air_conditioner",
+      "manufacturer": "Daikin",
+      "modelNumber": "FBA71A",
+      "properties": {
+        "powerMin": 80,
+        "powerMax": 4500,
+        "hasOnOff": true,
+        "annualPowerWh": 0
+      },
+      "hasTrainedModel": false,
+      "createdAt": "2026-02-14T22:30:00.800Z",
+      "updatedAt": "2026-02-14T22:30:00.800Z"
     }
   ]
 }

@@ -152,6 +152,14 @@
       </div>
       </div>
     </div>
+
+    <!-- Toast Notification -->
+    <transition name="toast">
+      <div v-if="toast.show" :class="['toast', toast.type]">
+        <span class="toast-icon">{{ toast.icon }}</span>
+        <span class="toast-message">{{ toast.message }}</span>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -177,6 +185,14 @@ const props = defineProps({
 
 const emit = defineEmits(['update:detectorSettings'])
 
+// Toast notification state
+const toast = ref({
+  show: false,
+  message: '',
+  type: 'success',
+  icon: ''
+})
+
 // State
 const selectedDate = ref(format(new Date(), 'yyyy-MM-dd'))
 const loading = ref(false)
@@ -194,8 +210,6 @@ const showDetailedPredictions = ref(false)
 // Configuration - now using props instead of local state
 const threshold = computed(() => props.detectorSettings.threshold)
 const useSeq2Point = computed(() => props.detectorSettings.useSeq2Point)
-const useGSP = computed(() => props.detectorSettings.useGSP)
-const gspConfig = computed(() => props.detectorSettings.gspConfig)
 const autoSyncToHA = computed(() => props.detectorSettings.autoSyncToHA)
 const autoRunEnabled = computed(() => props.detectorSettings.autoRunEnabled)
 
@@ -229,6 +243,18 @@ const tagColors = [
 ]
 
 const colorMap = ref({})
+
+// Toast notification function
+const showToast = (message, type = 'success') => {
+  toast.value.message = message
+  toast.value.type = type
+  toast.value.icon = type === 'success' ? '✓' : (type === 'error' ? '✕' : 'ℹ')
+  toast.value.show = true
+  
+  setTimeout(() => {
+    toast.value.show = false
+  }, 3000)
+}
 
 // Computed
 const uniqueTags = computed(() => {
@@ -517,9 +543,7 @@ watch(() => props.detectorSettings.autoRunEnabled, async (enabled, oldEnabled) =
       const config = {
         intervalMinutes: 60,
         useSeq2Point: useSeq2Point.value,
-        selectedModels: selectedSeq2PointModels.value,
-        useGSP: useGSP.value,
-        gspConfig: gspConfig.value
+        selectedModels: selectedSeq2PointModels.value
       }
       
       await startAutoPredictor(props.sessionId, config)
@@ -531,7 +555,7 @@ watch(() => props.detectorSettings.autoRunEnabled, async (enabled, oldEnabled) =
       startAutoRunStatusPolling()
     } catch (error) {
       console.error('Failed to start auto-predictor:', error)
-      alert(`Failed to start automatic predictions: ${error.message}`)
+      showToast(`Failed to start automatic predictions: ${error.message}`, 'error')
     }
   } else {
     try {
@@ -585,7 +609,7 @@ const triggerManualAutoRun = async () => {
     setTimeout(updateAutoRunStatus, 2000) // Update status after 2 seconds
   } catch (error) {
     console.error('Failed to trigger manual run:', error)
-    alert(`Failed to trigger manual run: ${error.message}`)
+    showToast(`Failed to trigger manual run: ${error.message}`, 'error')
   }
 }
 
@@ -984,147 +1008,6 @@ const loadAndPredict = async () => {
       } else {
         // No appliance activity detected
         error.value = `No appliance activity detected above the ${(threshold.value * 100).toFixed(0)}% confidence threshold on this day. Try lowering the threshold in settings.`
-        loading.value = false
-        loadingProgress.value = ''
-      }
-      
-      return
-    }
-
-    // Use GSP API if enabled
-    if (useGSP.value) {
-      loadingProgress.value = 'Running GSP disaggregation...'
-      
-      // Transform powerData to ensure it has the right format
-      const formattedPowerData = powerData.value.map(dp => ({
-        timestamp: dp.timestamp || dp.last_changed || dp.last_updated,
-        power: parseFloat(dp.power || dp.value || dp.state || 0)
-      }))
-      
-      // Call GSP API
-      const gspResponse = await fetch('/api/gsp/analyze-day', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          date: selectedDate.value,
-          powerData: formattedPowerData,
-          config: gspConfig.value
-        })
-      })
-      
-      if (!gspResponse.ok) {
-        const errorText = await gspResponse.text()
-        let errorData
-        try {
-          errorData = JSON.parse(errorText)
-          throw new Error(errorData.error || errorData.message || 'GSP disaggregation failed')
-        } catch (e) {
-          throw new Error(`GSP disaggregation failed: ${gspResponse.status}`)
-        }
-      }
-      
-      const gspResult = await gspResponse.json()
-      
-      if (!gspResult.success) {
-        throw new Error(gspResult.message || 'GSP disaggregation failed')
-      }
-      
-      // Transform GSP results to prediction format
-      modelLoaded.value = true
-      const allWindows = []
-      const windowSize = 10 * 60 * 1000 // 10 minutes in ms
-      
-      // For each appliance found by GSP
-      if (gspResult.appliances && gspResult.appliances.length > 0) {
-        loadingProgress.value = `Processing ${gspResult.appliances.length} detected appliances...`
-        
-        for (const appliance of gspResult.appliances) {
-          const applianceTimeseries = appliance.timeseries || []
-          
-          // Group appliance activity into 10-minute windows
-          const dayStart = new Date(`${selectedDate.value}T00:00:00`).getTime()
-          const dayEnd = new Date(`${selectedDate.value}T23:59:59`).getTime()
-          
-          for (let time = dayStart; time < dayEnd; time += windowSize) {
-            const windowEnd = Math.min(time + windowSize, dayEnd)
-            
-            // Find appliance power readings in this window
-            const windowReadings = applianceTimeseries.filter(reading => {
-              const readingTime = new Date(reading.timestamp).getTime()
-              return readingTime >= time && readingTime < windowEnd && reading.power > 0
-            })
-            
-            if (windowReadings.length > 0) {
-              // Calculate average power and energy for this window
-              const avgPower = windowReadings.reduce((sum, r) => sum + r.power, 0) / windowReadings.length
-              
-              // Use trapezoidal integration for energy
-              let windowEnergy = 0
-              for (let i = 0; i < windowReadings.length - 1; i++) {
-                const current = windowReadings[i]
-                const next = windowReadings[i + 1]
-                const currentTime = new Date(current.timestamp).getTime()
-                const nextTime = new Date(next.timestamp).getTime()
-                const duration = (nextTime - currentTime) / (1000 * 60 * 60) // hours
-                
-                if (duration > 0 && duration < 1) {
-                  const avgWindowPower = (current.power + next.power) / 2
-                  windowEnergy += avgWindowPower * duration
-                }
-              }
-              
-              allWindows.push({
-                startTime: format(new Date(time), 'HH:mm'),
-                endTime: format(new Date(windowEnd), 'HH:mm'),
-                tag: appliance.name,
-                displayTag: appliance.name,
-                confidence: 0.8, // GSP doesn't provide confidence, use fixed value
-                avgPower: avgPower,
-                energy: windowEnergy,
-                standbyEnergy: 0,
-                color: getTagColor(appliance.name),
-                tags: [{ tag: appliance.name, probability: 0.8 }]
-              })
-            }
-          }
-        }
-        
-        // Sort predictions by time
-        allWindows.sort((a, b) => {
-          const timeA = new Date(`${selectedDate.value}T${a.startTime}`).getTime()
-          const timeB = new Date(`${selectedDate.value}T${b.startTime}`).getTime()
-          return timeA - timeB
-        })
-        
-        predictions.value = allWindows
-        loadingProgress.value = 'Processing predictions...'
-        
-        // Render charts if we have predictions
-        if (predictions.value.length > 0) {
-          // Set loading to false first so charts container becomes visible
-          loading.value = false
-          loadingProgress.value = ''
-          
-          // Render charts after DOM updates
-          await nextTick()
-          setTimeout(() => {
-            renderPowerChart()
-            renderPieChart()
-          }, 100)
-          
-          // Sync predictions to Home Assistant if enabled (in background)
-          if (autoSyncToHA.value) {
-            syncPredictionsToHA().catch(err => {
-              console.error('Background sync failed:', err)
-            })
-          }
-        } else {
-          error.value = gspResult.message || 'No appliances detected by GSP'
-          loading.value = false
-          loadingProgress.value = ''
-        }
-      } else {
-        error.value = gspResult.message || 'GSP did not detect any appliances. Try adjusting the configuration parameters.'
         loading.value = false
         loadingProgress.value = ''
       }
@@ -2291,6 +2174,85 @@ tbody tr:hover {
   
   .chart-section {
     padding: 0.75rem;
+  }
+}
+
+/* Toast Notification Styles */
+.toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-weight: 500;
+  z-index: 9999;
+  min-width: 300px;
+  max-width: 500px;
+}
+
+.toast.success {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.toast.error {
+  background: #dc3545;
+  color: white;
+}
+
+.toast.info {
+  background: #17a2b8;
+  color: white;
+}
+
+.toast-icon {
+  font-size: 1.5rem;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+}
+
+.toast-message {
+  flex: 1;
+}
+
+/* Toast Animation */
+.toast-enter-active {
+  animation: toast-in 0.3s ease-out;
+}
+
+.toast-leave-active {
+  animation: toast-out 0.3s ease-in;
+}
+
+@keyframes toast-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes toast-out {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
   }
 }
 </style>

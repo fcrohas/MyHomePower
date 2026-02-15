@@ -1,34 +1,5 @@
 <template>
   <div class="ml-trainer">
-    <!-- Logs Icon -->
-    <button 
-      class="logs-icon-button" 
-      @click="toggleLogs" 
-      :title="showLogs ? 'Hide logs' : 'Show backend logs'"
-    >
-      📔
-    </button>
-
-    <!-- Logs Modal -->
-    <div v-if="showLogs" class="logs-modal">
-      <div class="logs-modal-content">
-        <div class="logs-header">
-          <h4>📔 Backend Live Logs</h4>
-          <button @click="toggleLogs" class="btn-close-logs">✕</button>
-        </div>
-        <div class="logs-body" ref="logsBody">
-          <div v-if="backendLogs.length === 0" class="no-logs">No logs yet. Logs will appear during training and data preparation.</div>
-          <div v-for="(log, index) in backendLogs" :key="index" class="log-entry" :class="log.type">
-            <span class="log-timestamp">{{ log.timestamp }}</span>
-            <span class="log-message">{{ log.message }}</span>
-          </div>
-        </div>
-        <div class="logs-footer">
-          <button @click="clearLogs" class="btn btn-small btn-secondary">Clear Logs</button>
-        </div>
-      </div>
-    </div>
-
     <!-- Top Row: Saved Models (Left) and Training Config (Right) -->
     <div class="top-row">
       <!-- Left: Saved Models Section -->
@@ -847,10 +818,7 @@ export default {
       selectedModelForConfig: null,
       trainingStep: 1,
       trainingProgressTab: 'metrics',
-      statisticsTab: 'chart',
-      showLogs: false,
-      backendLogs: [],
-      logsAutoScroll: true
+      statisticsTab: 'chart'
     }
   },
   computed: {
@@ -1332,7 +1300,6 @@ export default {
       this.currentEpoch = 0
       this.currentMetrics = null
       this.stoppedEarly = false
-      this.backendLogs = [] // Clear logs for new training session
 
       // Switch to progress tab to show training
       this.savedModelsTab = 'progress'
@@ -1486,32 +1453,20 @@ export default {
     },
 
     toggleLogs() {
-      this.showLogs = !this.showLogs
+      // No longer needed - logs are in sidebar
+      // Kept for compatibility, does nothing
     },
 
     addLog(type, message) {
-      const timestamp = new Date().toLocaleTimeString()
-      this.backendLogs.push({ type, message, timestamp })
-      
-      // Auto-scroll to bottom if enabled
-      if (this.logsAutoScroll) {
-        this.$nextTick(() => {
-          const logsBody = this.$refs.logsBody
-          if (logsBody) {
-            logsBody.scrollTop = logsBody.scrollHeight
-          }
-        })
-      }
-      
-      // Keep only last 500 logs to prevent memory issues
-      if (this.backendLogs.length > 500) {
-        this.backendLogs.shift()
-      }
+      // Dispatch log event to BackendLogs component
+      window.dispatchEvent(new CustomEvent('backend-log', {
+        detail: { type, message }
+      }))
     },
 
     clearLogs() {
-      this.backendLogs = []
-      this.addLog('info', 'Logs cleared')
+      // No longer needed - logs are in sidebar
+      // Kept for compatibility, does nothing
     },
 
     async stopTraining() {
@@ -3587,158 +3542,6 @@ export default {
   .config-panel {
     max-height: none;
   }
-}
-
-/* Logs Icon */
-.logs-icon-button {
-  position: fixed;
-  top: 80px;
-  right: 20px;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border: none;
-  font-size: 20px;
-  cursor: pointer;
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-  transition: all 0.3s ease;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.logs-icon-button:hover {
-  transform: scale(1.1);
-  box-shadow: 0 6px 16px rgba(102, 126, 234, 0.6);
-}
-
-/* Logs Modal */
-.logs-modal {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2000;
-  padding: 20px;
-}
-
-.logs-modal-content {
-  background: #1e1e1e;
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-  max-width: 900px;
-  width: 100%;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-}
-
-.logs-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px;
-  border-bottom: 1px solid #333;
-}
-
-.logs-header h4 {
-  margin: 0;
-  color: #fff;
-  font-size: 18px;
-}
-
-.btn-close-logs {
-  background: none;
-  border: none;
-  color: #999;
-  font-size: 24px;
-  cursor: pointer;
-  padding: 0;
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  transition: all 0.2s ease;
-}
-
-.btn-close-logs:hover {
-  background: #333;
-  color: #fff;
-}
-
-.logs-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-  font-family: 'Courier New', monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  background: #0d0d0d;
-}
-
-.no-logs {
-  color: #666;
-  text-align: center;
-  padding: 40px;
-}
-
-.log-entry {
-  display: flex;
-  gap: 12px;
-  padding: 6px 0;
-  border-bottom: 1px solid #222;
-}
-
-.log-entry:last-child {
-  border-bottom: none;
-}
-
-.log-timestamp {
-  color: #666;
-  min-width: 90px;
-  flex-shrink: 0;
-}
-
-.log-message {
-  flex: 1;
-  word-break: break-word;
-}
-
-.log-entry.info .log-message {
-  color: #4a9eff;
-}
-
-.log-entry.success .log-message {
-  color: #42b983;
-}
-
-.log-entry.error .log-message {
-  color: #ff5555;
-  font-weight: 600;
-}
-
-.log-entry.warning .log-message {
-  color: #ffa500;
-}
-
-.log-entry.epoch .log-message {
-  color: #bb86fc;
-}
-
-.logs-footer {
-  padding: 15px 20px;
-  border-top: 1px solid #333;
-  display: flex;
-  justify-content: flex-end;
 }
 
 @media (max-width: 768px) {

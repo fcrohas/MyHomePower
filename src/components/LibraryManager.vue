@@ -2,6 +2,9 @@
   <div class="library-manager">
     <div class="library-header">
       <div class="header-actions">
+        <button @click="showOnlineBrowser = true" class="btn-highlight">
+          🌐 Browse Online Library
+        </button>
         <button @click="showAddModal = true" class="btn-primary">
           ➕ Add New Model
         </button>
@@ -14,6 +17,9 @@
             style="display: none"
           />
         </label>
+        <button @click="showShareWizard = true" class="btn-secondary" v-if="models.length > 0">
+          📤 Share Model
+        </button>
       </div>
     </div>
 
@@ -27,7 +33,10 @@
         <div class="model-card-header">
           <div class="model-header-title">
             <h3>{{ model.name }}</h3>
-            <span v-if="model.linkedApplianceName" class="imported-badge" title="Imported model with trained files">
+            <span v-if="model.sourceRepository" class="online-badge" :title="`Downloaded from ${model.metadata?.repositoryName || 'online repository'}`">
+              🌐
+            </span>
+            <span v-else-if="model.linkedApplianceName" class="imported-badge" title="Imported model with trained files">
               📥
             </span>
           </div>
@@ -285,6 +294,19 @@
         <span class="toast-message">{{ toast.message }}</span>
       </div>
     </transition>
+
+    <!-- Online Library Browser -->
+    <OnlineLibraryBrowser 
+      v-if="showOnlineBrowser" 
+      @close="showOnlineBrowser = false"
+      @modelDownloaded="handleModelDownloaded"
+    />
+
+    <!-- Share Model Wizard -->
+    <ShareModelWizard 
+      v-if="showShareWizard" 
+      @close="showShareWizard = false"
+    />
   </div>
 </template>
 
@@ -299,6 +321,8 @@ import {
   exportModel, 
   importModel 
 } from '../services/library'
+import OnlineLibraryBrowser from './OnlineLibraryBrowser.vue'
+import ShareModelWizard from './ShareModelWizard.vue'
 
 // Props
 const props = defineProps({
@@ -313,6 +337,8 @@ const emit = defineEmits(['data-used'])
 // State
 const models = ref([])
 const showAddModal = ref(false)
+const showOnlineBrowser = ref(false)
+const showShareWizard = ref(false)
 const editingModel = ref(null)
 const formData = ref(getEmptyFormData())
 const mlModelData = ref(null) // Store ML model data for export
@@ -381,6 +407,12 @@ async function loadModels() {
   } catch (error) {
     showToast('Failed to load models: ' + error.message, 'error')
   }
+}
+
+// Handle model downloaded from online library
+function handleModelDownloaded(model) {
+  showToast(`${model.name} downloaded successfully!`, 'success')
+  loadModels() // Reload local models to show the new one
 }
 
 // Select model for editing
@@ -640,6 +672,24 @@ function formatDate(dateString) {
 
 .btn-secondary:hover {
   background: #f0f8f5;
+}
+
+.btn-highlight {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 600;
+  transition: all 0.2s;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.btn-highlight:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
 }
 
 /* Model Cards Grid */

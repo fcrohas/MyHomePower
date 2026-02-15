@@ -37,3 +37,5 @@ __pycache__/
 *.pyc
 samplecode/
 native/
+saved_models/
+*.zip

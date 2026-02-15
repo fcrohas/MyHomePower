@@ -1,0 +1,14 @@
+{
+  "repositories": [
+    {
+      "id": "official",
+      "name": "Official MyHomePower Models",
+      "url": "https://raw.githubusercontent.com/fcrohas/MyHomePower-Models/main",
+      "enabled": true,
+      "lastSync": null,
+      "type": "official"
+    }
+  ],
+  "autoRefreshInterval": 86400000,
+  "lastUpdate": "2026-02-14T21:40:59.043Z"
+}
